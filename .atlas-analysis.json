@@ -1,0 +1,107 @@
+{
+  "projectType": "saas",
+  "projectName": "Dev0",
+  "projectDescription": "An agentic engineering platform that plans, executes, and ships GitHub pull requests using Gemini AI models running in isolated E2B sandboxes.",
+  "theme": "palm",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "how-it-works"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/project-creation",
+              "features/ai-planning",
+              "features/task-execution",
+              "features/github-integration",
+              "features/realtime-logs",
+              "features/code-review"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment-variables",
+              "configuration/e2b-sandbox",
+              "configuration/gemini-models",
+              "configuration/database"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/local",
+              "deployment/docker",
+              "deployment/google-cloud-run"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/execution-orchestrator",
+              "architecture/ai-agents",
+              "architecture/sandbox-provider",
+              "architecture/realtime-streaming"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Server Actions",
+            "pages": [
+              "api-reference/actions/project",
+              "api-reference/actions/execution",
+              "api-reference/actions/review"
+            ]
+          },
+          {
+            "group": "Data Models",
+            "pages": [
+              "api-reference/models/project",
+              "api-reference/models/task",
+              "api-reference/models/sandbox"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "AI-powered project planning with Gemini 3 Pro generating phased task graphs with dependencies",
+    "Isolated E2B sandbox execution running Gemini CLI in YOLO mode for autonomous coding",
+    "PR-first workflow: every completed task automatically opens a GitHub pull request for review",
+    "Real-time execution visibility with live JSONL event streaming via Upstash Realtime",
+    "Human-in-the-loop mission control UI for approving, requesting changes, or merging PRs",
+    "Task state machine managing PENDING → RUNNING → REVIEW → DONE transitions with retry logic",
+    "Secret redaction ensuring API keys are never exposed in execution logs",
+    "Vibe-to-preview with Gemini 3 Flash turning rough ideas into structured project metadata"
+  ],
+  "publicApiSurface": [
+    "startTask(projectId, taskId?) — claim and begin executing a task in a sandbox",
+    "completeTask(projectId, taskId, result) — finalize task with success/failure and PR URL",
+    "getNextRunnableTask(projectId) — find next unblocked PENDING task respecting dependencies",
+    "isProjectRunning(projectId) — check if a project has an active task execution",
+    "generatePreview(input) — Gemini 3 Flash preview agent: vibe → name, tagline, description",
+    "generatePlan(input) — Gemini 3 Pro planner agent: description → phased task graph",
+    "Server action: createProject — create a project with vibe input",
+    "Server action: startExecution — trigger task execution for a project",
+    "Server action: reviewTask — approve/reject a task in REVIEW state",
+    "Realtime channel: execution.task_started / task_log / task_review / task_failed"
+  ]
+}

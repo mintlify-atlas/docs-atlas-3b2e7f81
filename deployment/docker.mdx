@@ -1,0 +1,155 @@
+---
+title: "Docker deployment"
+description: "Build and run Dev0 as a Docker container on any Docker-compatible host."
+---
+
+Dev0 ships with a multi-stage Dockerfile that produces a minimal production image based on `oven/bun:1`. You can run it on any host that supports Docker — a VPS, a container platform, or a cloud VM.
+
+## Dockerfile
+
+The project's Dockerfile uses three stages: dependency installation with Bun, a Vite build using Node (to avoid a known Bun memory issue with Vite), and a lean production image.
+
+```dockerfile Dockerfile
+FROM oven/bun:1 AS base
+WORKDIR /app
+
+# --- Install dependencies ---
+FROM base AS deps
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+
+# --- Build with Node (Bun has a known memory issue with Vite builds) ---
+FROM node:22-slim AS build
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+RUN npm run build
+
+# --- Production image ---
+FROM base AS production
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV PORT=3000
+COPY --from=build /app/.output /app/.output
+COPY --from=build /app/public /app/public
+EXPOSE 3000
+CMD ["bun", "--bun", ".output/server/index.mjs"]
+```
+
+## Deployment
+
+<Steps>
+  <Step title="Build the image">
+    Run the Docker build from the root of the repository. This tags the image as `dev0`.
+
+    ```bash
+    docker build -t dev0 .
+    ```
+
+    <Tip>
+      The `.dockerignore` file excludes `node_modules`, `.output`, `.env*`, test files, and editor metadata, so the build context stays small.
+    </Tip>
+  </Step>
+
+  <Step title="Run the container">
+    Pass all required environment variables using `-e` flags. The app listens on port 3000.
+
+    ```bash
+    docker run --rm -p 3000:3000 \
+      -e DATABASE_URL=postgresql://user:password@host:5432/dev0 \
+      -e E2B_API_KEY=your_e2b_api_key \
+      -e GOOGLE_GENERATIVE_AI_API_KEY=your_gemini_api_key \
+      -e AGENT_GEMINI_API_KEY=your_agent_gemini_api_key \
+      -e GITHUB_TOKEN=your_github_token \
+      -e UPSTASH_REDIS_REST_URL=https://your-instance.upstash.io \
+      -e UPSTASH_REDIS_REST_TOKEN=your_upstash_token \
+      dev0
+    ```
+
+    <Warning>
+      Dev0 does not bundle a database. `DATABASE_URL` must point to an external PostgreSQL instance accessible from within the container. Using `localhost` will not work — use the host machine's IP or a network alias.
+    </Warning>
+  </Step>
+</Steps>
+
+## Environment variables
+
+The following variables must be set at runtime. Variables marked **required** will cause the app to throw on startup if missing.
+
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `E2B_API_KEY` | Yes | E2B sandbox orchestration key |
+| `E2B_TEMPLATE` | No (default: `dev0-universal`) | E2B sandbox template name |
+| `E2B_SANDBOX_TIMEOUT_MS` | No (default: `3600000`) | Sandbox timeout in milliseconds |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Yes | Gemini API key for backend AI SDK |
+| `AGENT_GEMINI_API_KEY` | Yes | Gemini API key injected into sandboxes |
+| `GITHUB_TOKEN` | Yes | GitHub token for repo and PR operations |
+| `GITHUB_BOT_USERNAME` | No (default: `dev0-agent`) | GitHub username for the bot account |
+| `APP_URL` | No (default: `http://localhost:3000`) | Public URL of the deployment |
+| `UPSTASH_REDIS_REST_URL` | Yes | Upstash Redis REST endpoint |
+| `UPSTASH_REDIS_REST_TOKEN` | Yes | Upstash Redis REST token |
+
+## Docker Compose example
+
+The following Compose file runs Dev0 alongside a local PostgreSQL instance. For production, replace the `db` service with an externally managed database such as [Neon](https://neon.tech) or RDS.
+
+```yaml docker-compose.yml
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dev0
+      POSTGRES_PASSWORD: dev0password
+      POSTGRES_DB: dev0
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev0"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    image: dev0
+    build: .
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://dev0:dev0password@db:5432/dev0
+      E2B_API_KEY: ${E2B_API_KEY}
+      GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY}
+      AGENT_GEMINI_API_KEY: ${AGENT_GEMINI_API_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      UPSTASH_REDIS_REST_URL: ${UPSTASH_REDIS_REST_URL}
+      UPSTASH_REDIS_REST_TOKEN: ${UPSTASH_REDIS_REST_TOKEN}
+      APP_URL: http://localhost:3000
+      NODE_ENV: production
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+```
+
+Start the stack:
+
+```bash
+docker compose up -d
+```
+
+<Note>
+  On first run you still need to apply database migrations. Run the following after the `db` service is healthy:
+
+  ```bash
+  docker compose exec app bun run db:migrate
+  ```
+</Note>
+
+## Persistent storage
+
+Dev0 itself is stateless — all application state lives in PostgreSQL and Upstash Redis. The Docker container does not require a mounted volume. Ensure your PostgreSQL data directory is persisted (as shown in the `postgres_data` volume above) or use a managed database service.

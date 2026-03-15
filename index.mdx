@@ -1,97 +1,104 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Dev0 — Agentic Engineering Platform"
+description: "From zero to one. Ship GitHub pull requests with AI agents powered by Gemini — without losing control."
 ---
 
-## Setting up
+<img
+  src="https://media.brand.dev/288cc7c4-5cef-4376-950b-bdf0083eedae.png"
+  alt="Dev0"
+  width="80"
+/>
 
-Get your documentation site up and running in minutes.
+# From zero to one
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+Dev0 is an agentic engineering platform that turns your ideas into working GitHub pull requests. You describe the feature, Dev0 plans it into tasks, runs each task inside an isolated sandbox using Gemini AI, and puts a reviewable PR in front of you — every time.
 
-## Make it yours
+Engineers stay in control as technical leads. Dev0 handles the execution.
 
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Set up Dev0 and ship your first AI-generated PR in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="How it works" icon="diagram-project" href="/how-it-works">
+    Understand the full flow from idea to pull request.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Architecture" icon="building" href="/architecture/overview">
+    Dive into the orchestrator, agents, and sandbox layer.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api-reference/actions/project">
+    Explore server actions and data models.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## The Dev0 loop
 
-Everything you need to create world-class documentation.
+Dev0 is built around the Ralph loop — let a code agent run until the task is actually done, but keep it contained, auditable, and reviewable.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+<Steps>
+  <Step title="Describe your idea">
+    Enter a rough "vibe" — a few sentences about what you want to build. Gemini 3 Flash turns it into a project name, tagline, description, and tech stack.
+  </Step>
+  <Step title="Review the plan">
+    Gemini 3 Pro generates a dependency-aware task graph with phases, order, and model assignments. You see every task before execution starts.
+  </Step>
+  <Step title="Execute in isolation">
+    Each task runs inside an E2B sandbox. Gemini CLI executes in YOLO mode — fully autonomous, fully contained. Live logs stream to your dashboard.
+  </Step>
+  <Step title="Review and merge">
+    Every completed task produces a GitHub pull request. You approve, request changes, or merge directly from Dev0's mission control UI.
+  </Step>
+</Steps>
 
-## Need inspiration?
+## Why Dev0
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={3}>
+  <Card title="Platform-controlled autonomy" icon="shield-check">
+    Agents run inside E2B sandboxes with strict orchestration. No runaway processes, no side effects outside the sandbox.
+  </Card>
+  <Card title="PR-first workflow" icon="code-branch">
+    Every task ends with a reviewable GitHub pull request. Code review remains your control plane.
+  </Card>
+  <Card title="Real-time visibility" icon="eye">
+    Live JSONL event streaming via Upstash Realtime. Watch Gemini CLI think, write, and commit — as it happens.
+  </Card>
+  <Card title="Gemini-native" icon="sparkles">
+    Built around Gemini 3 Pro for planning and Gemini 3 Flash for fast previews, with Gemini CLI for sandbox execution.
+  </Card>
+  <Card title="Human-in-the-loop" icon="user-check">
+    You are always the technical lead. Dev0 executes; you approve. The review step is never skipped.
+  </Card>
+  <Card title="Retry and self-correct" icon="rotate">
+    Tasks automatically retry up to 3 times. The orchestrator manages state transitions and surfaces failures clearly.
+  </Card>
+</CardGroup>
+
+## Tech stack
+
+Dev0 is built on modern, battle-tested technologies:
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 19, TanStack Start, TanStack Router, Vite |
+| UI | shadcn/ui, Tailwind CSS v4, Motion, Lucide |
+| Backend | TanStack Start server actions, TypeScript |
+| Database | PostgreSQL, Drizzle ORM |
+| AI | Gemini 3 Pro/Flash, Vercel AI SDK, Gemini CLI |
+| Sandbox | E2B, Docker templates |
+| Realtime | Upstash Realtime, Upstash Redis |
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Local setup" icon="laptop" href="/deployment/local">
+    Run Dev0 locally with Bun, PostgreSQL, and your API keys.
+  </Card>
+  <Card title="Docker deployment" icon="docker" href="/deployment/docker">
+    Deploy with Docker to any container-compatible host.
+  </Card>
+  <Card title="Google Cloud Run" icon="cloud" href="/deployment/google-cloud-run">
+    Deploy to Google Cloud Run for production-grade hosting.
+  </Card>
+  <Card title="Environment variables" icon="key" href="/configuration/environment-variables">
+    Full reference for all required and optional configuration values.
+  </Card>
+</CardGroup>

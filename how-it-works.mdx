@@ -1,0 +1,132 @@
+---
+title: "How it works"
+description: "Follow the full pipeline from a rough idea to a merged GitHub pull request."
+---
+
+Dev0 transforms a plain-text description into a structured plan, executes each task autonomously inside a sandboxed environment, and opens a GitHub pull request for every change — all while streaming live progress to your browser.
+
+## End-to-end flow
+
+<Steps>
+  <Step title="Idea → Preview">
+    You type a product idea — your "vibe" — into the landing screen. Dev0 sends it to **Gemini 3 Flash** via the Vercel AI SDK.
+
+    The preview agent extracts four pieces of structured output:
+
+    - **Project name** — a short, memorable name (e.g., `BudgetFlow`)
+    - **Tagline** — a single sentence capturing the essence
+    - **Description** — 2–3 sentences preserving key requirements, theme, and target users
+    - **Tech stack** — currently always `react-vite` (React + Vite, client-side SPA)
+
+    The preview is shown immediately so you can review and edit before committing.
+  </Step>
+
+  <Step title="Plan → Tasks">
+    Once you confirm the preview and click **Create Project**, Dev0 calls **Gemini 3 Pro** to generate a full project plan.
+
+    The planner produces:
+
+    - A **project specification** with an overview, key features, and technical notes
+    - A **phased task graph** of 5–20 atomic tasks, each scoped to a single PR
+    - **Dependency links** between tasks (a task waits until all its dependencies reach `DONE` or `SKIPPED`)
+    - A **Gemini model assignment** per task (`gemini-3-flash-preview` for straightforward UI/CRUD tasks, `gemini-3-pro-preview` for complex logic or architecture)
+    - A **README** for the generated GitHub repository
+
+    Tasks are organized into up to five phases: Foundation → Core Features → Secondary Features → Polish → Launch.
+  </Step>
+
+  <Step title="Execute">
+    When you start a task, the **Execution Orchestrator** takes over:
+
+    1. Claims the task atomically in the database (sets status to `RUNNING`).
+    2. Gets or creates a persistent **E2B sandbox** for the project, with the GitHub repo already cloned.
+    3. Syncs the sandbox repo to the default branch.
+    4. Builds a task prompt from the project spec, task description, and any `RULES.md` constraints.
+    5. Runs **Gemini CLI in YOLO mode** (`--yolo`, `--output-format stream-json`) inside the sandbox.
+
+    The agent runs until it finishes, retries, or hits the `maxAttempts` ceiling (default: 3). It writes its result to `agent-result.json` inside the sandbox before exiting.
+  </Step>
+
+  <Step title="Stream">
+    While the agent runs, the orchestrator reads Gemini CLI's `--output-format stream-json` output as a JSONL stream.
+
+    Each line is parsed into a typed `GeminiStreamEvent` and published to an **Upstash Realtime** channel keyed by project ID. Your browser subscribes to that channel and renders log lines, tool calls, and assistant messages in real time — no polling required.
+
+    Events that are just user-role echo messages are suppressed from the UI to keep the log readable.
+  </Step>
+
+  <Step title="Ship">
+    After the Gemini CLI process exits with code `0`, the orchestrator finalizes the task:
+
+    1. Reads `agent-result.json` for the commit message, PR title, and PR body.
+    2. Creates a branch named `dev0/task-{taskId}`.
+    3. Stages all changes with `git add -A`, commits, and pushes.
+    4. Runs `gh pr create` to open a pull request on GitHub.
+    5. Extracts the PR URL from the output and stores it on the task record.
+
+    The task moves to **Review** status and the PR link appears in the UI.
+  </Step>
+
+  <Step title="Review">
+    From the mission control dashboard you can:
+
+    - Open the GitHub PR directly to inspect the diff.
+    - Approve and merge in GitHub, which automatically advances the project.
+    - Request changes — the task can be re-run after you update the prompt or rules.
+
+    Only tasks whose dependencies are `DONE` or `SKIPPED` become runnable, so the orchestrator always respects the dependency graph when deciding what to execute next.
+  </Step>
+</Steps>
+
+## Task state machine
+
+Every task moves through a predictable set of states:
+
+```
+PENDING → RUNNING → REVIEW → DONE
+                 ↘ FAILED
+         SKIPPED
+```
+
+| State | Meaning |
+|---|---|
+| `PENDING` | Task is waiting. Dependencies may or may not be met yet. |
+| `RUNNING` | Orchestrator has claimed the task. Sandbox is active, agent is executing. |
+| `REVIEW` | Agent finished successfully. A GitHub PR is open and waiting for your review. |
+| `DONE` | PR merged. Task is complete and unblocks any dependent tasks. |
+| `FAILED` | Agent exited with a non-zero code, or finalization (commit/push/PR) failed. The `attempts` counter increments. |
+| `SKIPPED` | Task was manually skipped. Treated as complete for dependency resolution. |
+
+<Note>
+  A task that reaches `FAILED` can be retried up to `maxAttempts` times (default: 3). After that, you need to investigate the logs, update the task or rules, and reset it manually.
+</Note>
+
+## The Ralph loop philosophy
+
+Dev0 is built around the **Ralph loop**: run the agent until the task is actually done, not just until the first plausible answer.
+
+In practice this means:
+
+- **Long-running by design.** The Gemini CLI runs with `--yolo` so it can take as many tool-use steps as needed without asking for permission on every action.
+- **Contained.** Every run happens inside an isolated E2B sandbox. The agent cannot reach external services, production databases, or your local filesystem.
+- **Auditable.** All Gemini CLI JSONL events are persisted to the `task_logs` table, including tool calls, token counts, and duration. Nothing is discarded.
+- **Reviewable.** No code ever lands in your main branch without going through a pull request that you explicitly approve.
+
+This gives you the throughput of autonomous execution without sacrificing visibility or control.
+
+## Key components
+
+<CardGroup cols={2}>
+  <Card title="Preview agent" icon="wand-magic-sparkles">
+    Gemini 3 Flash with structured output schema. Turns a vibe into project metadata at low latency.
+  </Card>
+  <Card title="Planner agent" icon="list-check">
+    Gemini 3 Pro with structured output schema. Generates a dependency-aware task graph and full project spec.
+  </Card>
+  <Card title="Execution orchestrator" icon="gears">
+    Claims tasks, manages sandbox lifecycle, coordinates Git operations, and drives task state transitions.
+  </Card>
+  <Card title="Realtime stream" icon="satellite-dish">
+    Upstash Realtime pub/sub pushes parsed Gemini CLI JSONL events to the browser as the agent runs.
+  </Card>
+</CardGroup>

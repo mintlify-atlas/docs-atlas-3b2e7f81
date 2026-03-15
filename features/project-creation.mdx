@@ -1,0 +1,110 @@
+---
+title: "Project creation"
+description: "How Dev0 turns a natural language idea into a planned, version-controlled project in seconds."
+---
+
+Creating a project in Dev0 starts with a single input: your **vibe**. You describe what you want to build in plain English, and Dev0 handles the rest—naming, planning, scaffolding, and GitHub setup.
+
+## The vibe input flow
+
+<Steps>
+  <Step title="Enter your vibe">
+    On the home screen, type a free-form description of your project idea. It can be as brief as a sentence or as detailed as a paragraph. Dev0 accepts ambiguity and fills in reasonable assumptions.
+  </Step>
+  <Step title="Review the AI-generated preview">
+    `gemini-3-flash-preview` processes your input and returns a structured preview: a project name, a tagline, a 2–3 sentence description, and a suggested tech stack. You see this before committing to anything.
+  </Step>
+  <Step title="Confirm on the project form">
+    The preview data pre-fills the confirmation form at `/new`. You can edit the project name, description, and tech stack before submitting.
+  </Step>
+  <Step title="Project is created">
+    Dev0 inserts the project record with status `PLANNING`, runs the AI planner to generate tasks, scaffolds the GitHub repository, and transitions the project to `READY`.
+  </Step>
+</Steps>
+
+## Preview output schema
+
+The preview agent returns a structured object validated against `previewOutputSchema` from `src/lib/ai/schemas.ts`:
+
+```typescript
+export const previewOutputSchema = z.object({
+  name: z
+    .string()
+    .describe(
+      'A catchy, memorable project name (2-4 words, PascalCase or with spaces)',
+    ),
+  tagline: z
+    .string()
+    .describe('A short, punchy tagline summarizing the project (max 10 words)'),
+  description: z
+    .string()
+    .describe(
+      'A concise 2-3 sentence description (max 300 characters) that preserves key requirements, theme/styling cues, and constraints',
+    ),
+  suggestedTechStack: z
+    .enum(['tanstack-start', 'react-vite', 'nextjs'])
+    .describe(
+      'The recommended tech stack based on the project requirements. Use react-vite for now; other stacks are disabled for stability',
+    ),
+})
+```
+
+<Note>
+  The preview agent always recommends `react-vite` at this time. TanStack Start and Next.js are shown in the UI as "Coming soon" and cannot be selected.
+</Note>
+
+## Project form fields
+
+The confirmation form at `/new` collects the following fields before calling `createProject`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | `string` | Pre-filled from preview. Required. |
+| `description` | `string` | Pre-filled from preview. Max 350 characters. |
+| `vibeInput` | `string` | Your original free-form input. Stored verbatim. |
+| `techStack` | `enum` | `react-vite` \| `tanstack-start` \| `nextjs` |
+| `theme` | `string` | Optional UI theme preference. Defaults to `slate`. |
+
+After the project is created, Dev0 also populates:
+
+| Field | Type | Notes |
+|---|---|---|
+| `repoUrl` | `string` | GitHub HTML URL of the created repository. |
+| `repoName` | `string` | Repository name slug used for GitHub API calls. |
+| `specContent` | `text` | Markdown spec generated from the AI planner output. |
+
+## Project status lifecycle
+
+Every project moves through a defined set of statuses stored in the `project_status` Postgres enum:
+
+<CardGroup cols={2}>
+  <Card title="PLANNING" icon="circle-dashed">
+    The project record exists but the AI plan and GitHub repo are still being created.
+  </Card>
+  <Card title="READY" icon="circle-check">
+    Planning complete. The repo is live and tasks are ready to execute.
+  </Card>
+  <Card title="ACTIVE" icon="play">
+    One or more tasks are currently running.
+  </Card>
+  <Card title="PAUSED" icon="pause">
+    Execution has been manually paused.
+  </Card>
+  <Card title="COMPLETED" icon="check">
+    All tasks are done and the project is finished.
+  </Card>
+  <Card title="ARCHIVED" icon="archive">
+    The project has been archived and is no longer active.
+  </Card>
+</CardGroup>
+
+## What gets created
+
+When you submit the project form, `createProject` in `src/lib/actions/project.ts` performs six sequential steps:
+
+1. Inserts the project row with status `PLANNING`
+2. Calls `generateProjectPlan` to produce tasks and a spec via `gemini-3-pro-preview`
+3. Stores the spec as `specContent` on the project
+4. Inserts all planned tasks into the `tasks` table
+5. Creates the GitHub repository from a template and commits initial files (`README.md`, `TASKLIST.md`, `LEARNINGS.md`, `.dev0/RULES.md`)
+6. Updates the project to `READY` with `repoUrl` and `repoName`

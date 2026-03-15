@@ -1,80 +1,167 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Get Dev0 running locally and ship your first AI-generated pull request in minutes."
 ---
 
-## Get started in three steps
+<Note>
+  Before you begin, make sure you have the following: **Bun** runtime, a running **PostgreSQL** database, and API keys for **E2B**, **Google Gemini** (two keys), **Upstash Redis**, and a **GitHub** bot account token.
+</Note>
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+<CardGroup cols={3}>
+  <Card title="Bun" icon="b" href="https://bun.sh">
+    JavaScript runtime and package manager used to run Dev0.
+  </Card>
+  <Card title="PostgreSQL" icon="database">
+    Local or hosted PostgreSQL instance for storing projects, tasks, and logs.
+  </Card>
+  <Card title="E2B API key" icon="box">
+    Sandbox execution environment. Get yours at e2b.dev.
+  </Card>
+  <Card title="Google Gemini keys" icon="sparkles">
+    Two keys: one for server-side planning, one injected into sandboxes.
+  </Card>
+  <Card title="Upstash Redis" icon="bolt">
+    Powers the realtime pub/sub event streaming. Create a free database at upstash.com.
+  </Card>
+  <Card title="GitHub token" icon="github">
+    A GitHub bot account token with repo creation and PR permissions.
+  </Card>
+</CardGroup>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+## Setup
 
-### Step 2: Deploy your changes
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/manasseh-zw/dev0.git
+    cd dev0
+    ```
+  </Step>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+  <Step title="Install dependencies">
+    ```bash
+    bun install
+    ```
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Configure environment variables">
+    Copy the example environment file and fill in your values:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    cp .env.example .env.local
+    ```
 
-### Step 3: Go live
+    Open `.env.local` and fill in all required values:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```bash .env.local
+    # Database (PostgreSQL)
+    DATABASE_URL="postgresql://user:password@localhost:5432/dev0"
+
+    # E2B Sandbox Orchestration
+    E2B_API_KEY=""
+    E2B_TEMPLATE="dev0-universal"
+    E2B_SANDBOX_TIMEOUT_MS="3600000"
+
+    # Google Gemini (via Vercel AI SDK — used for planning and previews)
+    GOOGLE_GENERATIVE_AI_API_KEY=""
+
+    # Agent Gemini API Key (injected into sandboxes for autonomous coding)
+    AGENT_GEMINI_API_KEY=""
+
+    # GitHub Bot Account (for repo creation and PR operations)
+    GITHUB_TOKEN=""
+    GITHUB_BOT_USERNAME="dev0-agent"
+
+    # Application
+    APP_URL="http://localhost:3000"
+    NODE_ENV="development"
+
+    # Upstash Realtime (Redis)
+    UPSTASH_REDIS_REST_URL=""
+    UPSTASH_REDIS_REST_TOKEN=""
+    ```
+
+    <Warning>
+      `GOOGLE_GENERATIVE_AI_API_KEY` and `AGENT_GEMINI_API_KEY` should be **different keys**. The agent key is injected into E2B sandbox environments where it runs Gemini CLI. Using separate keys lets you rotate the sandbox key independently without affecting server-side planning.
+    </Warning>
+  </Step>
+
+  <Step title="Run database migrations">
+    ```bash
+    bun run db:migrate
+    ```
+
+    This creates all required tables: `projects`, `tasks`, `sandboxes`, and `task_logs`.
+  </Step>
+
+  <Step title="Start the development server">
+    ```bash
+    bun run dev
+    ```
+
+    Dev0 is now running at [http://localhost:3000](http://localhost:3000).
+  </Step>
+
+  <Step title="Create your first project">
+    1. Open [http://localhost:3000](http://localhost:3000) in your browser
+    2. Click **New project**
+    3. Enter a natural language description of what you want to build — your "vibe input"
+    4. Gemini 3 Flash generates a project name, tagline, description, and tech stack
+    5. Review the preview and confirm to create the project
+
+    <Tip>
+      Be specific in your vibe input. The more context you give (target users, key features, styling preferences), the better Gemini's planning output will be.
+    </Tip>
+  </Step>
+
+  <Step title="Watch execution and review your PR">
+    1. From the project dashboard, click **Start execution**
+    2. Dev0 uses Gemini 3 Pro to generate a phased task plan
+    3. The orchestrator claims the first task, spins up an E2B sandbox, and runs Gemini CLI
+    4. Watch live logs stream to your dashboard as the agent codes
+    5. When a task completes, a GitHub pull request is automatically opened
+    6. Review the diff and click **Approve & merge** or **Request changes**
+  </Step>
+</Steps>
+
+## Production build (local)
+
+To build and run a production-optimized version locally:
+
+```bash
+bun run build
+bun run start
+```
+
+## Running tests
+
+<CodeGroup>
+```bash All tests
+bun run test
+```
+```bash Sandbox tests
+bun run test:sandbox
+```
+```bash GitHub integration tests
+bun run test:github
+```
+</CodeGroup>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="How it works" icon="diagram-project" href="/how-it-works">
+    Understand the full flow from vibe input to pull request.
+  </Card>
+  <Card title="Configuration" icon="key" href="/configuration/environment-variables">
+    Full reference for all environment variables.
+  </Card>
+  <Card title="Docker deployment" icon="docker" href="/deployment/docker">
+    Deploy Dev0 with Docker for production use.
+  </Card>
+  <Card title="Architecture" icon="building" href="/architecture/overview">
+    Dive into the orchestrator, AI agents, and sandbox layer.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

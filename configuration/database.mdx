@@ -1,0 +1,228 @@
+---
+title: "Database"
+description: "PostgreSQL setup, Drizzle ORM configuration, schema overview, and migration commands for Dev0."
+---
+
+Dev0 uses PostgreSQL with [Drizzle ORM](https://orm.drizzle.team) for type-safe database access. You can connect to a local PostgreSQL instance during development or use a managed serverless provider such as Neon in production.
+
+---
+
+## Database providers
+
+Dev0 supports two database drivers, selected by the `DATABASE_PROVIDER` environment variable.
+
+<Tabs>
+  <Tab title="Supabase / local PostgreSQL">
+    Set `DATABASE_PROVIDER=supabase` (or omit it — this is the default). Dev0 uses the `postgres-js` driver with a standard `DATABASE_URL` connection string.
+
+    ```bash .env.local
+    DATABASE_PROVIDER="supabase"
+    DATABASE_URL="postgresql://user:password@localhost:5432/dev0"
+    ```
+
+    This works with any PostgreSQL-compatible host: local Docker, Supabase, Railway, Render, or a self-hosted instance.
+  </Tab>
+  <Tab title="Neon (serverless)">
+    Set `DATABASE_PROVIDER=neon` to use the `@neondatabase/serverless` HTTP driver. This is recommended for serverless deployment targets (Vercel, Cloudflare Workers) where persistent TCP connections are not available.
+
+    ```bash .env.local
+    DATABASE_PROVIDER="neon"
+    DATABASE_URL="postgresql://user:password@ep-xxx.us-east-1.aws.neon.tech/neondb?sslmode=require"
+    ```
+
+    Neon provides a free tier with automatic scaling to zero.
+  </Tab>
+</Tabs>
+
+---
+
+## Local PostgreSQL setup
+
+<Steps>
+  <Step title="Start PostgreSQL">
+    <CodeGroup>
+
+    ```bash Docker
+    docker run --name dev0-db \
+      -e POSTGRES_USER=user \
+      -e POSTGRES_PASSWORD=password \
+      -e POSTGRES_DB=dev0 \
+      -p 5432:5432 \
+      -d postgres:16
+    ```
+
+    ```bash Homebrew (macOS)
+    brew install postgresql@16
+    brew services start postgresql@16
+    createdb dev0
+    ```
+
+    </CodeGroup>
+  </Step>
+  <Step title="Set the connection string">
+    ```bash .env.local
+    DATABASE_PROVIDER="supabase"
+    DATABASE_URL="postgresql://user:password@localhost:5432/dev0"
+    ```
+  </Step>
+  <Step title="Run migrations">
+    ```bash
+    bun run db:migrate
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Drizzle configuration
+
+Drizzle Kit reads `drizzle.config.ts` for migration and introspection commands. The config loads `.env.local` automatically via `dotenv`.
+
+```typescript drizzle.config.ts
+import { config } from 'dotenv'
+import { defineConfig } from 'drizzle-kit'
+
+config({ path: '.env.local' })
+
+export default defineConfig({
+  dialect: 'postgresql',
+  schema: './src/lib/db/schema.ts',
+  out: './drizzle',
+  dbCredentials: {
+    url: process.env.DATABASE_URL!,
+  },
+})
+```
+
+Generated migration files are written to the `drizzle/` directory and committed to version control.
+
+---
+
+## Migration commands
+
+<CodeGroup>
+
+```bash bun run db:migrate
+bun run db:migrate
+```
+
+```bash bun run db:generate
+bun run db:generate
+```
+
+```bash bun run db:push
+bun run db:push
+```
+
+</CodeGroup>
+
+| Command | What it does |
+|---|---|
+| `bun run db:migrate` | Runs `drizzle-kit migrate` — applies all pending SQL migrations in the `drizzle/` directory to the database. Use this in CI and production. |
+| `bun run db:generate` | Runs `drizzle-kit generate` — compares `src/lib/db/schema.ts` against the previous snapshot and generates a new SQL migration file. Run this after every schema change. |
+| `bun run db:push` | Runs `drizzle-kit push` — pushes schema changes directly to the database without generating a migration file. Use only during rapid prototyping on a non-shared database. |
+
+<Warning>
+  Use `db:push` only on a local or throwaway database. It bypasses the migration history and can cause schema drift in shared or production environments.
+</Warning>
+
+---
+
+## Schema overview
+
+The full schema is defined in `src/lib/db/schema.ts`. Dev0 uses four tables.
+
+### projects
+
+Stores the top-level project record created when a user submits a project idea.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | Primary key, randomly generated. |
+| `name` | `text` | Project display name. |
+| `description` | `text` | Optional description. |
+| `status` | `project_status` | Enum: `PLANNING`, `READY`, `ACTIVE`, `PAUSED`, `COMPLETED`, `ARCHIVED`. Default `PLANNING`. |
+| `repo_url` | `text` | GitHub repository URL once created. |
+| `repo_name` | `text` | Short repository name (without owner prefix). |
+| `tech_stack` | `text` | Template identifier, e.g. `react-vite`. Default `react-vite`. |
+| `theme` | `text` | UI theme identifier. Default `slate`. |
+| `vibe_input` | `text` | The original free-text idea the user submitted. |
+| `spec_content` | `text` | Generated project specification from the planner agent. |
+| `created_at` | `timestamptz` | Set on insert. |
+| `updated_at` | `timestamptz` | Updated automatically on every change. |
+
+### tasks
+
+Each project has one or more tasks generated by the planner agent. Tasks are executed sequentially within a phase, in ascending `order`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | Primary key. |
+| `project_id` | `uuid` | Foreign key → `projects.id` (cascade delete). |
+| `title` | `text` | Short task title. |
+| `description` | `text` | Detailed acceptance criteria for the agent. |
+| `phase` | `integer` | Phase number (1 = Foundation, 2 = Core, etc.). Default `1`. |
+| `order` | `integer` | Execution order within the phase. Default `0`. |
+| `status` | `task_status` | Enum: `PENDING`, `RUNNING`, `REVIEW`, `DONE`, `FAILED`, `SKIPPED`. Default `PENDING`. |
+| `gemini_model` | `gemini_model` | Enum: `gemini-3-flash-preview` or `gemini-3-pro-preview`. Default `gemini-3-pro-preview`. |
+| `dependencies` | `text[]` | Array of task IDs that must complete before this task can run. |
+| `pr_url` | `text` | GitHub pull request URL once opened. |
+| `pr_number` | `integer` | GitHub pull request number. |
+| `attempts` | `integer` | Number of execution attempts. Default `0`. |
+| `max_attempts` | `integer` | Maximum retries before the task is marked `FAILED`. Default `3`. |
+| `created_at` | `timestamptz` | Set on insert. |
+| `updated_at` | `timestamptz` | Updated automatically on every change. |
+
+### sandboxes
+
+Tracks each E2B sandbox associated with a project.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | Primary key (Dev0's internal ID). |
+| `project_id` | `uuid` | Foreign key → `projects.id` (cascade delete). |
+| `sandbox_id` | `text` | E2B's sandbox identifier. Unique. |
+| `status` | `sandbox_status` | Enum: `READY`, `RUNNING`, `STOPPED`. Default `READY`. |
+| `task_id` | `uuid` | The task currently assigned to this sandbox. Unique — one task per sandbox. |
+| `snapshot_id` | `text` | Template name used to create the sandbox (e.g. `dev0-universal`). |
+| `public_url` | `text` | Public preview URL if a dev server is running. |
+| `created_at` | `timestamptz` | Set on insert. |
+| `updated_at` | `timestamptz` | Updated automatically on every change. |
+
+### task_logs
+
+Stores detailed execution logs for each task separately from the task record itself, enabling lazy loading in the UI.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | Primary key. |
+| `task_id` | `uuid` | Foreign key → `tasks.id` (cascade delete). One-to-one. |
+| `events` | `jsonb` | Array of `GeminiStreamEvent` objects capturing the full agent stream. |
+| `summary` | `text` | Final assistant message or completion summary. |
+| `total_tokens` | `integer` | Total token usage for the task run. |
+| `duration_ms` | `integer` | Wall-clock duration in milliseconds. |
+| `tool_calls_count` | `integer` | Number of tool calls the agent made. Default `0`. |
+| `created_at` | `timestamptz` | Set on insert. |
+| `updated_at` | `timestamptz` | Updated automatically on every change. |
+
+---
+
+## Database URL format
+
+```
+postgresql://USER:PASSWORD@HOST:PORT/DBNAME
+```
+
+| Segment | Example |
+|---|---|
+| `USER` | `postgres` |
+| `PASSWORD` | `mysecretpassword` |
+| `HOST` | `localhost` or `ep-xxx.us-east-1.aws.neon.tech` |
+| `PORT` | `5432` |
+| `DBNAME` | `dev0` |
+
+For Neon, append `?sslmode=require` to enforce TLS:
+
+```
+postgresql://user:password@ep-xxx.us-east-1.aws.neon.tech/neondb?sslmode=require
+```

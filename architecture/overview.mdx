@@ -1,0 +1,96 @@
+---
+title: "Architecture overview"
+description: "High-level tour of every layer in Dev0: frontend, backend, AI pipeline, sandbox execution, realtime streaming, and database."
+---
+
+Dev0 is built in layers, each with a single clear responsibility. The frontend collects user intent and displays execution state. Server actions coordinate AI agents and the orchestrator. The orchestrator manages sandbox lifecycle and Git operations. Realtime channels push events back to the browser as they happen.
+
+## Tech stack
+
+| Layer | Technologies |
+|---|---|
+| **Frontend** | React 19, TanStack Start, TanStack Router, Vite |
+| **UI** | shadcn/ui, Tailwind CSS, Motion, Lucide |
+| **Backend** | TanStack Start server actions, TypeScript |
+| **Database** | PostgreSQL, Drizzle ORM |
+| **AI** | Gemini 3 Pro/Flash, Vercel AI SDK, Gemini CLI |
+| **Sandbox** | E2B, `dev0-universal` Docker template |
+| **Realtime** | Upstash Realtime, Upstash Redis |
+| **Dev tools** | Vitest, Prettier, Bun |
+
+## System layers
+
+<CardGroup cols={2}>
+  <Card title="Frontend" icon="browser">
+    TanStack Start (React 19) renders the mission control UI. TanStack Router manages client-side navigation. All state updates arrive over the realtime channel — no polling.
+  </Card>
+  <Card title="Server actions" icon="server">
+    TanStack Start server actions are the backend boundary. They call AI agents for planning and preview, then hand off execution requests to the orchestrator.
+  </Card>
+  <Card title="AI agents" icon="brain">
+    Two agents run via the Vercel AI SDK with structured outputs. The Preview Agent (Gemini 3 Flash) extracts metadata from a user's vibe input. The Planner Agent (Gemini 3 Pro) produces a phased, dependency-aware task graph.
+  </Card>
+  <Card title="Execution orchestrator" icon="sitemap">
+    The orchestrator claims tasks atomically, manages sandbox state in memory, streams Gemini CLI output to the realtime channel, and finalizes each task as a GitHub pull request.
+  </Card>
+  <Card title="Sandbox provider" icon="box">
+    An abstraction layer backed by E2B. Each task gets an isolated sandbox running the `dev0-universal` template. The Gemini CLI executes inside the sandbox in YOLO mode.
+  </Card>
+  <Card title="Realtime streaming" icon="bolt">
+    Upstash Realtime pub/sub delivers execution events from the orchestrator to the frontend. Channels are scoped per project using `execution:{projectId}`.
+  </Card>
+  <Card title="Database" icon="database">
+    PostgreSQL (via Drizzle ORM) persists projects, tasks, sandboxes, and `task_logs`. Task logs are stored separately from task rows for lazy loading.
+  </Card>
+  <Card title="GitHub" icon="code-branch">
+    After Gemini CLI finishes, the orchestrator commits changes, pushes a branch named `dev0/task-{taskId}`, and opens a pull request via the `gh` CLI.
+  </Card>
+</CardGroup>
+
+## Request flow
+
+The diagram below describes how a request travels from the browser through to a merged pull request.
+
+```
+User
+ └─▶ TanStack Start frontend
+       └─▶ Server action
+             ├─▶ Preview Agent   (Gemini 3 Flash via Vercel AI SDK)
+             ├─▶ Planner Agent   (Gemini 3 Pro via Vercel AI SDK)
+             └─▶ Orchestrator
+                   └─▶ Sandbox Provider
+                         └─▶ E2B sandbox
+                               └─▶ Gemini CLI (--yolo --output-format stream-json)
+                                     │
+                         JSONL events │
+                                     ▼
+                         Upstash Realtime ──▶ Frontend
+                   └─▶ GitHub (commit → branch → PR)
+```
+
+## Design principles
+
+**Ralph Loop.** Dev0 is inspired by the Ralph loop: give the agent enough autonomy to finish a task without supervision, but enforce a hard boundary at review. The agent runs until done; you decide what gets merged.
+
+**PR-first.** Every task ends as a GitHub pull request. There are no direct commits to the default branch. Review is always the final gate.
+
+**Human-in-the-loop.** The mission control UI exposes every execution event in real time. You can approve, request changes, or merge without leaving the platform.
+
+**Contained execution.** Gemini CLI runs inside an isolated E2B sandbox. Secrets are injected as environment variables and redacted from logs. The sandbox has no persistent state across tasks by default.
+
+## Sub-architecture pages
+
+<CardGroup cols={2}>
+  <Card title="Execution orchestrator" icon="sitemap" href="/architecture/execution-orchestrator">
+    Task claim algorithm, `runTaskExecution` flow, Git operations, and error handling.
+  </Card>
+  <Card title="AI agents" icon="brain" href="/architecture/ai-agents">
+    Preview Agent, Planner Agent, schemas, and how the Gemini CLI execution agent differs.
+  </Card>
+  <Card title="Sandbox provider" icon="box" href="/architecture/sandbox-provider">
+    Provider abstraction, E2B integration, sandbox lifecycle, and `executeGeminiStreaming`.
+  </Card>
+  <Card title="Realtime streaming" icon="bolt" href="/architecture/realtime-streaming">
+    Upstash pub/sub setup, channel naming, event schema, and JSONL parsing.
+  </Card>
+</CardGroup>

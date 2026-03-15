@@ -1,0 +1,169 @@
+---
+title: "Google Cloud Run"
+description: "Build and deploy Dev0 to Google Cloud Run using Cloud Build and Container Registry."
+---
+
+Google Cloud Run is a good fit for Dev0 because it scales to zero when idle, requires no cluster management, and handles the HTTPS termination that the app expects in production. Because Cloud Run containers are stateless, pair it with [Neon](https://neon.tech) or another serverless PostgreSQL provider for the database.
+
+## Prerequisites
+
+- The [gcloud CLI](https://cloud.google.com/sdk/docs/install) installed and up to date
+- A Google Cloud project with billing enabled
+- Permissions to enable APIs, push images to Container Registry, and deploy Cloud Run services
+
+## Deployment
+
+<Steps>
+  <Step title="Authenticate and select your project">
+    Log in with the gcloud CLI and set the project you want to deploy to.
+
+    ```bash
+    gcloud auth login
+    gcloud config set project YOUR_PROJECT_ID
+    ```
+  </Step>
+
+  <Step title="Enable required APIs">
+    Enable the Cloud Run and Cloud Build APIs. You only need to do this once per project.
+
+    ```bash
+    gcloud services enable run.googleapis.com cloudbuild.googleapis.com
+    ```
+  </Step>
+
+  <Step title="Build and push the container image">
+    Submit the build to Cloud Build. It uses the project's Dockerfile and pushes the resulting image to Container Registry.
+
+    ```bash
+    gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/dev0 .
+    ```
+
+    <Tip>
+      Run this from the root of the repository so that Cloud Build picks up the `Dockerfile` and the full build context.
+    </Tip>
+  </Step>
+
+  <Step title="Deploy to Cloud Run">
+    Deploy the image as a Cloud Run service. Replace each `...` value with your actual credentials.
+
+    ```bash
+    gcloud run deploy dev0 \
+      --image gcr.io/YOUR_PROJECT_ID/dev0 \
+      --region us-central1 \
+      --allow-unauthenticated \
+      --port 3000 \
+      --set-env-vars DATABASE_URL=... \
+      --set-env-vars E2B_API_KEY=... \
+      --set-env-vars GOOGLE_GENERATIVE_AI_API_KEY=... \
+      --set-env-vars AGENT_GEMINI_API_KEY=... \
+      --set-env-vars GITHUB_TOKEN=... \
+      --set-env-vars UPSTASH_REDIS_REST_URL=... \
+      --set-env-vars UPSTASH_REDIS_REST_TOKEN=...
+    ```
+
+    Cloud Run returns the service URL once the deployment completes. Set this as your `APP_URL`.
+
+    <Warning>
+      Passing secrets as `--set-env-vars` exposes them in the Cloud Run console. For production, use Secret Manager instead — see [Managing secrets](#managing-secrets-with-secret-manager) below.
+    </Warning>
+  </Step>
+
+  <Step title="Run database migrations">
+    After the first deployment, run the Drizzle migrations against your production database. The easiest way is to run them locally pointing at the production `DATABASE_URL`.
+
+    ```bash
+    DATABASE_URL=postgresql://... bun run db:migrate
+    ```
+
+    <Tip>
+      If you use Neon, you can also run migrations from a Cloud Run job or a one-off Cloud Build step to keep everything inside GCP.
+    </Tip>
+  </Step>
+</Steps>
+
+## All environment variables
+
+Pass every variable as a `--set-env-vars` flag (comma-separated values work too) or via Secret Manager references. Variables marked **required** will cause the app to throw on startup if missing.
+
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `E2B_API_KEY` | Yes | E2B sandbox orchestration key |
+| `E2B_TEMPLATE` | No (default: `dev0-universal`) | E2B sandbox template name |
+| `E2B_SANDBOX_TIMEOUT_MS` | No (default: `3600000`) | Sandbox timeout in milliseconds |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Yes | Gemini API key for the backend AI SDK |
+| `AGENT_GEMINI_API_KEY` | Yes | Gemini API key injected into sandboxes for YOLO mode |
+| `GITHUB_TOKEN` | Yes | GitHub token for repo and PR operations |
+| `GITHUB_BOT_USERNAME` | No (default: `dev0-agent`) | GitHub username for the bot account |
+| `APP_URL` | No (default: `http://localhost:3000`) | The public URL of your Cloud Run service |
+| `UPSTASH_REDIS_REST_URL` | Yes | Upstash Redis REST endpoint |
+| `UPSTASH_REDIS_REST_TOKEN` | Yes | Upstash Redis REST token |
+
+## Managing secrets with Secret Manager
+
+Storing secrets as plain environment variables means they appear in the Cloud Run UI and deployment history. For production deployments, use [Google Secret Manager](https://cloud.google.com/secret-manager) to keep them out of the console.
+
+<Steps>
+  <Step title="Create a secret">
+    ```bash
+    echo -n "your-secret-value" | gcloud secrets create E2B_API_KEY \
+      --data-file=- \
+      --replication-policy=automatic
+    ```
+  </Step>
+
+  <Step title="Grant the Cloud Run service account access">
+    ```bash
+    gcloud secrets add-iam-policy-binding E2B_API_KEY \
+      --member="serviceAccount:YOUR_PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+      --role="roles/secretmanager.secretAccessor"
+    ```
+  </Step>
+
+  <Step title="Reference the secret in your deployment">
+    Use `--set-secrets` instead of `--set-env-vars` for sensitive values.
+
+    ```bash
+    gcloud run deploy dev0 \
+      --image gcr.io/YOUR_PROJECT_ID/dev0 \
+      --region us-central1 \
+      --allow-unauthenticated \
+      --port 3000 \
+      --set-secrets E2B_API_KEY=E2B_API_KEY:latest \
+      --set-secrets GOOGLE_GENERATIVE_AI_API_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest \
+      --set-secrets AGENT_GEMINI_API_KEY=AGENT_GEMINI_API_KEY:latest \
+      --set-secrets GITHUB_TOKEN=GITHUB_TOKEN:latest \
+      --set-secrets UPSTASH_REDIS_REST_TOKEN=UPSTASH_REDIS_REST_TOKEN:latest \
+      --set-env-vars DATABASE_URL=... \
+      --set-env-vars UPSTASH_REDIS_REST_URL=...
+    ```
+  </Step>
+</Steps>
+
+## Database recommendation
+
+Cloud Run instances are ephemeral, so you cannot run PostgreSQL alongside the app container. Use a managed database that supports serverless connections.
+
+<CardGroup cols={2}>
+  <Card title="Neon" icon="database" href="https://neon.tech">
+    Serverless PostgreSQL with connection pooling via the Neon serverless driver. Scales to zero like Cloud Run, which keeps idle costs low. The `@neondatabase/serverless` package is already in the project's dependencies.
+  </Card>
+  <Card title="Cloud SQL" icon="server" href="https://cloud.google.com/sql">
+    Google's managed PostgreSQL. Use the Cloud SQL Auth Proxy or a private IP connection. Requires a running instance, so costs are higher than Neon for low-traffic deployments.
+  </Card>
+</CardGroup>
+
+## Region recommendations
+
+Deploy to the region closest to the majority of your users and, if possible, the same region as your Upstash Redis instance to reduce realtime streaming latency.
+
+| Region | Location |
+|---|---|
+| `us-central1` | Iowa, USA (default, widely available) |
+| `us-east1` | South Carolina, USA |
+| `europe-west1` | Belgium |
+| `asia-east1` | Taiwan |
+
+<Tip>
+  Upstash lets you pick the region when you create a Redis database. Choose the region that matches or is closest to your Cloud Run region.
+</Tip>

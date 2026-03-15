@@ -1,0 +1,114 @@
+---
+title: "Code review"
+description: "How Dev0's human-in-the-loop review workflow lets you inspect, approve, or retry every change the agent makes."
+---
+
+Dev0 is designed around a human-in-the-loop philosophy: the agent writes the code and opens the pull request, but you are always the technical lead. Every task must pass through a review step before it is considered complete.
+
+## Review philosophy
+
+<Note>
+  Dev0 never auto-merges. Every task that reaches `REVIEW` status requires an explicit approval from you before its pull request is merged.
+</Note>
+
+## How a task enters review
+
+When the Gemini CLI exits with code `0` and `finalizeTaskChanges` succeeds, the orchestrator calls `completeTask` with `success: true`:
+
+```typescript
+await db
+  .update(tasks)
+  .set({
+    status: 'REVIEW',
+    prUrl: result.prUrl ?? null,
+  })
+  .where(eq(tasks.id, taskId))
+
+void getRealtimeChannel(projectId).emit('execution.task_review', {
+  projectId,
+  taskId,
+  prUrl: result.prUrl,
+})
+```
+
+The `execution.task_review` realtime event triggers the UI to update the task status and show the review prompt in real time.
+
+## The review interface
+
+The review section lives at `/project/:projectId/review`. It shows all tasks that have associated pull requests, grouped and filterable by status.
+
+<CardGroup cols={2}>
+  <Card title="PR summary" icon="git-pull-request">
+    Title, description, branch names, line additions/deletions, number of changed files, and commit count.
+  </Card>
+  <Card title="Diff viewer" icon="code">
+    A file-by-file diff of every change in the PR. Lock files and `.dev0/` internals are excluded from the view by default.
+  </Card>
+  <Card title="Execution logs" icon="scroll">
+    The full stream of `GeminiStreamEvent` records from the run: assistant messages, tool calls, and results.
+  </Card>
+  <Card title="PR comments" icon="message-square">
+    Issue comments and review comments from GitHub, with agent comments distinguished from human comments.
+  </Card>
+</CardGroup>
+
+## Review actions
+
+### Approve and merge
+
+Clicking **Approve & Merge** calls `mergePullRequest` in `src/lib/actions/review.ts`, which squash-merges the PR via the GitHub API and sets the task status to `DONE`:
+
+```typescript
+await github.mergePullRequest({
+  repoName: prContext.ref.repoName,
+  prNumber: prContext.ref.prNumber,
+  mergeMethod: 'squash',
+})
+
+await db
+  .update(tasks)
+  .set({ status: 'DONE' })
+  .where(eq(tasks.id, data.taskId))
+```
+
+Once a task is `DONE`, dependent tasks become unblocked and can be executed.
+
+### Request changes
+
+If the implementation is incomplete or incorrect, you can set the task back to `PENDING` to trigger a re-run. The existing PR branch remains open on GitHub.
+
+### Retry a failed task
+
+Failed tasks (`FAILED` status) can be re-executed from the task board. Each attempt increments the `attempts` counter. The `maxAttempts` column defaults to `3`.
+
+## Diff filtering
+
+The diff viewer automatically hides noise files using rules from `src/lib/review/ignore-files.ts`:
+
+```typescript
+export const DEFAULT_DIFF_IGNORE_PREFIXES = ['.dev0/', '.gemini/']
+
+export const DEFAULT_DIFF_IGNORE_EXACT = [
+  'bun.lock',
+  'bun.lockb',
+  'pnpm-lock.yaml',
+  'package-lock.json',
+  'yarn.lock',
+]
+```
+
+Files matching these prefixes or exact names are hidden from the diff view by default. You can toggle them back on if you need to inspect them.
+
+## Task status after review
+
+| Action | Resulting status |
+|---|---|
+| Approve & merge | `DONE` |
+| Request changes / reset | `PENDING` |
+| No action taken | Stays in `REVIEW` |
+
+Dependent tasks will not run until all their dependencies are in `DONE` or `SKIPPED` status. Approving a task unblocks the next task in the plan and allows execution to continue.
+
+<Tip>
+  Open the GitHub pull request link directly from the review UI to leave inline code comments. Dev0 surfaces both issue comments and review comments in the log view.
+</Tip>

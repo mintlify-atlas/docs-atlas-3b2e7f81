@@ -1,0 +1,147 @@
+---
+title: "AI planning"
+description: "How Dev0 uses Gemini to decompose your project description into a phased, dependency-aware task graph."
+---
+
+After you confirm your project, Dev0 runs the planner agent to convert your vibe input into an actionable set of tasks. This happens automatically before the GitHub repository is created.
+
+## How planning works
+
+The planner agent is implemented in `src/lib/ai/planner-agent.ts` and uses `gemini-3-pro-preview` (`GEMINI_3_PRO`). It receives your project name, description, tech stack, and original vibe input, then returns a complete `PlannerOutput`:
+
+```typescript
+// src/lib/types/planner.ts
+export type ProjectPlan = {
+  spec: ProjectSpec
+  tasks: PlannedTask[]
+  readmeContent: string
+}
+```
+
+The planner also generates the `specContent` markdown stored on the project and the `README.md` committed to your repository.
+
+## Phased task graph
+
+Tasks are organized into up to five phases. Earlier phases must complete before later ones begin:
+
+| Phase | Purpose |
+|---|---|
+| 1 | Foundation — project setup and core client utilities |
+| 2 | Core features — main functionality and key user flows |
+| 3 | Secondary features — additional features and integrations |
+| 4 | Polish — styling, animations, and error handling |
+| 5 | Launch — testing, documentation, and deployment |
+
+Each task carries a `phase` (1–5) and an `order` within that phase. The orchestrator uses these fields, along with the `dependencies` array, to determine which task to run next.
+
+## PlannedTask schema
+
+Every task produced by the planner conforms to `plannedTaskSchema` in `src/lib/ai/schemas.ts`:
+
+```typescript
+export const plannedTaskSchema = z.object({
+  id: z.string(),                          // e.g. "task-1"
+  title: z.string(),                       // Action-oriented title
+  description: z.string(),                 // Acceptance criteria included
+  phase: z.number().min(1).max(5),
+  order: z.number().min(1),                // 1-based within the phase
+  dependencies: z.array(z.string()),       // Array of task IDs
+  complexity: z.enum(['low', 'medium', 'high']),
+  geminiModel: z.enum(['gemini-3-flash-preview', 'gemini-3-pro-preview']),
+})
+```
+
+## Model assignment per task
+
+The planner assigns a Gemini model to each task based on complexity:
+
+<CardGroup cols={2}>
+  <Card title="gemini-3-flash-preview" icon="bolt">
+    Used for straightforward tasks: UI components, simple data flows, styling, and CRUD operations. Optimized for speed.
+  </Card>
+  <Card title="gemini-3-pro-preview" icon="brain">
+    Used for complex tasks: authentication setup, intricate state management, and architectural decisions. Optimized for reasoning.
+  </Card>
+</CardGroup>
+
+You can override the assigned model for any task from the project dashboard before execution.
+
+## Example task plan
+
+Here is what a planner output looks like for a simple notes app:
+
+```json
+{
+  "spec": {
+    "name": "NoteFlow",
+    "tagline": "Capture and organize thoughts instantly",
+    "overview": "NoteFlow is a client-side notes application...",
+    "features": [
+      "Create, edit, and delete notes",
+      "Tag-based organization",
+      "Full-text search",
+      "Local storage persistence"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "Set up local storage utility",
+      "description": "Create a typed client utility for reading and writing notes to localStorage. Include CRUD helpers and a serialization layer.",
+      "phase": 1,
+      "order": 1,
+      "dependencies": [],
+      "complexity": "low",
+      "geminiModel": "gemini-3-flash-preview"
+    },
+    {
+      "id": "task-2",
+      "title": "Build note editor component",
+      "description": "Implement a controlled textarea-based editor with auto-save. Must integrate with the storage utility from task-1.",
+      "phase": 2,
+      "order": 1,
+      "dependencies": ["task-1"],
+      "complexity": "medium",
+      "geminiModel": "gemini-3-flash-preview"
+    },
+    {
+      "id": "task-3",
+      "title": "Implement full-text search",
+      "description": "Add a search bar that filters notes in real time. Use a debounced input and highlight matched terms in results.",
+      "phase": 3,
+      "order": 1,
+      "dependencies": ["task-2"],
+      "complexity": "medium",
+      "geminiModel": "gemini-3-pro-preview"
+    }
+  ]
+}
+```
+
+## Dependency resolution
+
+The orchestrator's `getNextRunnableTask` function in `src/lib/execution/orchestrator.ts` determines which task to run next by walking the task list in ascending `phase` then `order`:
+
+- A task is **runnable** if its status is `PENDING` and every task ID in its `dependencies` array has status `DONE` or `SKIPPED`.
+- A task is **blocked** if any earlier task (by phase/order) is not yet complete, or if any direct dependency is incomplete.
+- The orchestrator picks the first unblocked `PENDING` task and atomically claims it by setting its status to `RUNNING`.
+
+<Note>
+  The planner normalizes task IDs and dependency references before storing them. Duplicate IDs are resolved with a `task-N` fallback, and any dependency that references a task appearing later in the list is silently dropped.
+</Note>
+
+## Planner system prompt
+
+The full system prompt sent to `gemini-3-pro-preview` instructs the model to:
+
+<AccordionGroup>
+  <Accordion title="Write a project specification">
+    A 2–3 paragraph overview, 3–8 specific features, and optional technical notes. This is stored as `specContent` on the project and passed as context to every task execution.
+  </Accordion>
+  <Accordion title="Break down 5–20 atomic tasks">
+    Each task must be completable in a single PR (up to 2 hours). Tasks are phased from foundation to launch, have stable IDs, and carry explicit dependency references.
+  </Accordion>
+  <Accordion title="Generate a README.md">
+    A complete repository README including project title, overview, tech stack, features, getting-started commands, and links to `TASKLIST.md`, `LEARNINGS.md`, and `.dev0/RULES.md`.
+  </Accordion>
+</AccordionGroup>

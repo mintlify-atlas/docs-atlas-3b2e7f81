@@ -1,0 +1,150 @@
+---
+title: "Task execution"
+description: "How Dev0 claims tasks, provisions sandboxes, runs Gemini CLI autonomously, and transitions task state."
+---
+
+Once a project reaches `READY` status, you can start execution. Dev0 picks the next unblocked task, spins up a sandboxed environment containing your repository, and runs Gemini CLI against a structured prompt. The agent writes code, updates tracking files, and writes a result contract that Dev0 uses to create the pull request.
+
+## Starting execution
+
+Call `startExecution` (from `src/lib/actions/execution.ts`) to trigger the orchestrator:
+
+```typescript
+export const startExecution = createServerFn({ method: 'POST' })
+  .inputValidator(startExecutionSchema)
+  .handler(async ({ data }) => {
+    const result = await orchestrator.startTask(data.projectId, data.taskId)
+    // ...
+  })
+```
+
+You can pass an explicit `taskId` or omit it to let the orchestrator auto-select the next runnable task.
+
+## Task claim sequence
+
+<Steps>
+  <Step title="Select next runnable task">
+    `getNextRunnableTask` walks tasks ordered by `phase` then `order`. A task is runnable when it is `PENDING` and all dependencies are `DONE` or `SKIPPED`.
+  </Step>
+  <Step title="Claim atomically">
+    The orchestrator performs an `UPDATE ... WHERE status = 'PENDING'` to flip the task to `RUNNING`. If the row was already claimed by a concurrent call, the attempt is retried up to `MAX_TASK_CLAIM_ATTEMPTS` (3) times.
+  </Step>
+  <Step title="Provision sandbox">
+    `getOrCreateProjectSandbox` returns a running sandbox with the project repo cloned at `$HOME/project`. If a sandbox already exists for the project it is reused.
+  </Step>
+  <Step title="Sync repo to default branch">
+    Before the agent starts, the orchestrator runs `git fetch origin --prune` and `git pull --ff-only` to ensure the sandbox is on the latest commit.
+  </Step>
+  <Step title="Run Gemini CLI">
+    `executeGeminiStreaming` invokes the Gemini CLI with `--yolo` (fully autonomous, no confirmation prompts) and `--output-format stream-json`. JSONL events stream back in real time.
+  </Step>
+  <Step title="Finalize changes">
+    After a zero exit code, the orchestrator reads `agent-result.json`, stages all changes, commits, pushes the branch, and opens a pull request via `gh pr create`.
+  </Step>
+</Steps>
+
+## Task prompt format
+
+`buildTaskPrompt` in `src/lib/execution/orchestrator.ts` assembles the full prompt sent to the agent. It includes:
+
+```
+You are an autonomous coding agent working inside a sandboxed repo at $HOME/project.
+
+Project: <name>
+Description: <description>
+Repo: <repoName>
+Repo URL: <repoUrl>
+Tech stack: react-vite (React + Vite)
+
+Task ID: <id>
+Title: <title>
+Description: <description>
+Phase: <phase>
+Order: <order>
+
+Project Spec:
+<specContent>
+
+Requirements:
+...
+```
+
+The requirements section gives the agent precise sandbox constraints:
+
+<AccordionGroup>
+  <Accordion title="What the agent must do">
+    - Implement only the assigned task — not other tasks from `TASKLIST.md`.
+    - Follow `.dev0/RULES.md` if present.
+    - Update `TASKLIST.md` to reflect progress.
+    - Update `LEARNINGS.md` when a reusable or non-obvious fix is discovered.
+    - Write `agent-result.json` in the run directory before finishing.
+  </Accordion>
+  <Accordion title="What the agent must not do">
+    - Run build commands (`bun run build`) or dev servers (`bun run dev`) — these hang indefinitely in the sandbox.
+    - Run `eslint`, `npx`, or any database migration commands.
+    - Run `git commit`, `git push`, or `gh pr create` — the orchestrator handles all Git operations.
+    - Delete or modify `.gemini` temp directories.
+    - Make real network connections or call external services.
+  </Accordion>
+  <Accordion title="Allowed commands">
+    - `bun install` and `bun run &lt;script&gt;` for package management.
+    - `bunx tsc --noEmit` for type checking.
+    - Shadcn UI components are pre-installed in `src/components/ui`; import directly without running the shadcn CLI.
+  </Accordion>
+</AccordionGroup>
+
+## YOLO mode
+
+Dev0 always runs the Gemini CLI with the `--yolo` flag. This enables fully autonomous operation: the agent does not pause to ask for confirmation before taking actions such as editing files or running commands.
+
+<Warning>
+  YOLO mode gives the agent broad autonomy inside the sandbox. Review the generated pull request carefully before merging.
+</Warning>
+
+## The agent-result.json contract
+
+At the end of every run, the agent writes a JSON file to `.dev0/runs/<taskId>/agent-result.json`:
+
+```json
+{
+  "status": "success",
+  "commitMessage": "feat: implement note editor with auto-save",
+  "prTitle": "feat: note editor component",
+  "prBody": "Implements the controlled textarea editor with debounced auto-save...\n\n### Changes\n- Added `NoteEditor` component\n- Wired to localStorage utility",
+  "notes": "Used `useCallback` to stabilize the save handler reference."
+}
+```
+
+| Field | Type | Used for |
+|---|---|---|
+| `status` | `"success"` \| `"failed"` | Determines overall task outcome |
+| `commitMessage` | `string` | Git commit message |
+| `prTitle` | `string` | GitHub pull request title |
+| `prBody` | `string` | GitHub pull request body |
+| `notes` | `string` | Optional agent notes (stored for review) |
+
+If the file is missing or cannot be parsed, the orchestrator falls back to `feat: complete task <title>` for the commit message and title.
+
+## Task status machine
+
+Each task moves through the following states:
+
+```
+PENDING → RUNNING → REVIEW   (success path)
+                  → FAILED   (error path)
+```
+
+Additional terminal states:
+
+| Status | Description |
+|---|---|
+| `DONE` | Merged and accepted by you in the review step. |
+| `SKIPPED` | Manually skipped; treated as complete for dependency purposes. |
+
+## Retry logic
+
+Failed tasks are not automatically retried. Each failure increments `attempts` on the task row. The `maxAttempts` column defaults to `3`. When you trigger execution on a failed task manually, Dev0 will re-run it from scratch on a fresh sandbox state.
+
+<Tip>
+  If a task fails repeatedly, check the real-time logs for the error. Common causes include type errors the agent missed, or a dependency task that produced incomplete output.
+</Tip>

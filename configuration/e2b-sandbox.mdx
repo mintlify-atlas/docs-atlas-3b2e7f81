@@ -1,0 +1,185 @@
+---
+title: "E2B sandbox"
+description: "How Dev0 uses E2B to create isolated, ephemeral coding environments for every task."
+---
+
+[E2B](https://e2b.dev) is a cloud sandbox platform that runs isolated Linux containers on demand. Dev0 uses E2B to give each task a clean, ephemeral environment where the Gemini CLI can write code, run commands, and open pull requests without touching your local machine or production systems.
+
+<Columns cols={2}>
+  <Card title="Isolated by default" icon="shield">
+    Each sandbox runs in a separate container with no shared filesystem. Code changes made for one task cannot bleed into another.
+  </Card>
+  <Card title="Pre-configured toolchain" icon="wrench">
+    The `dev0-universal` template ships with Node.js, Bun, the GitHub CLI, ripgrep, and the Gemini CLI — everything an agent needs to build and commit code.
+  </Card>
+  <Card title="Automatic cleanup" icon="trash">
+    Sandboxes are paused or killed after the configured timeout, keeping idle costs low.
+  </Card>
+  <Card title="Internet access" icon="globe">
+    Sandboxes are created with `allowInternetAccess: true` so the agent can install packages and call external APIs.
+  </Card>
+</Columns>
+
+---
+
+## The dev0-universal template
+
+All sandboxes are created from the `dev0-universal` template (ID `82cjfam0491ua8d0enim`). The template is defined in `e2b.toml` and built from `templates/e2b/e2b.Dockerfile`.
+
+### e2b.toml
+
+```toml e2b.toml
+# This is a config for E2B sandbox template.
+# You can use template ID (82cjfam0491ua8d0enim) or template name (dev0-universal) to create a sandbox:
+
+team_id = "a3e7b26a-2761-4441-bad5-83ec8170fa39"
+dockerfile = "templates/e2b/e2b.Dockerfile"
+template_name = "dev0-universal"
+template_id = "82cjfam0491ua8d0enim"
+```
+
+### Dockerfile
+
+```dockerfile templates/e2b/e2b.Dockerfile
+FROM node:lts
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV HOME=/root
+WORKDIR /workspace
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    git \
+    gnupg \
+    jq \
+    procps \
+    ripgrep \
+  && rm -rf /var/lib/apt/lists/*
+
+# GitHub CLI
+RUN mkdir -p /etc/apt/keyrings \
+  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+  && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+    > /etc/apt/sources.list.d/github-cli.list \
+  && apt-get update \
+  && apt-get install -y gh \
+  && rm -rf /var/lib/apt/lists/*
+
+# Gemini CLI
+RUN npm install -g @google/gemini-cli
+
+# Bun
+RUN npm install -g bun
+
+ENV PATH=/usr/local/bin:$PATH
+
+# Pre-configure Gemini to use API key auth
+RUN mkdir -p $HOME/.gemini \
+  && echo '{"selectedAuthType":"gemini-api-key"}' > $HOME/.gemini/settings.json
+```
+
+The Dockerfile installs:
+
+- **Node.js LTS** — base runtime
+- **Git, jq, ripgrep, curl** — standard development utilities
+- **GitHub CLI (`gh`)** — used by the agent to create branches and pull requests
+- **Gemini CLI (`@google/gemini-cli`)** — the AI coding agent that runs inside the sandbox
+- **Bun** — fast JavaScript runtime and package manager
+
+---
+
+## Building and publishing the template
+
+When you change `e2b.Dockerfile`, rebuild and publish the template so new sandboxes pick up your changes.
+
+<Steps>
+  <Step title="Install the E2B CLI">
+    ```bash
+    npm install -g e2b
+    ```
+  </Step>
+  <Step title="Log in to E2B">
+    ```bash
+    e2b auth login
+    ```
+  </Step>
+  <Step title="Build the template">
+    ```bash
+    bun run template:build
+    ```
+
+    This runs `e2b template build -d templates/e2b/e2b.Dockerfile -n dev0-universal`.
+  </Step>
+  <Step title="Publish the template">
+    ```bash
+    bun run template:publish
+    ```
+
+    This runs `e2b template publish dev0-universal` to make the new version available.
+  </Step>
+</Steps>
+
+---
+
+## Environment variables
+
+<ParamField path="E2B_API_KEY" type="string" required>
+  Your E2B API key. Passed to every `Sandbox.create()` and `Sandbox.connect()` call. The application throws at startup if this is not set.
+</ParamField>
+
+<ParamField path="E2B_TEMPLATE" type="string" default="dev0-universal">
+  The template name or ID to use when creating sandboxes. Change this to test a different template version without modifying code.
+</ParamField>
+
+<ParamField path="E2B_SANDBOX_TIMEOUT_MS" type="string" default="3600000">
+  Sandbox session timeout in milliseconds. Passed as `timeoutMs` to both `Sandbox.create()` and `Sandbox.connect()`. Non-numeric or non-positive values fall back to the default of `3600000` (one hour).
+</ParamField>
+
+---
+
+## Sandbox lifecycle
+
+### Creation
+
+When a task starts, Dev0 calls `getOrCreateProjectSandbox(projectId, taskId)`. The function:
+
+1. Checks the database for an existing sandbox assigned to the `taskId`. If one exists and is still reachable, it is reused.
+2. Falls back to any `READY` sandbox for the project.
+3. If no reusable sandbox exists, creates a fresh one with `Sandbox.create(E2B_TEMPLATE, { ... })`.
+
+During creation, Dev0:
+
+- Sets `GITHUB_TOKEN`, `GH_TOKEN`, `GEMINI_API_KEY`, and `AGENT_GEMINI_API_KEY` as environment variables inside the sandbox.
+- Writes `~/.gemini/settings.json` with `{"selectedAuthType": "gemini-api-key"}` so the Gemini CLI uses API key authentication.
+- Clones the project repository to `~/project`.
+
+### Task assignment
+
+Once a sandbox is running, the `taskId` field on the `sandboxes` database record is updated to track which task is using it. Only one task can be assigned to a sandbox at a time.
+
+### Cleanup
+
+Dev0 offers three cleanup operations:
+
+| Operation | Behaviour |
+|---|---|
+| `stopSandbox` | Calls `sandbox.betaPause()` and marks the record `STOPPED`. The sandbox can be resumed. |
+| `deleteSandbox` | Calls `sandbox.kill()` and removes the database record permanently. |
+| `resetProjectSandbox` | Kills all sandboxes for a project, then creates a fresh one. |
+
+---
+
+## Sandbox status
+
+The `sandboxes` table uses a `sandbox_status` enum with three values:
+
+| Status | Meaning |
+|---|---|
+| `READY` | The sandbox is running and available to accept tasks. |
+| `RUNNING` | The sandbox is actively executing a task. |
+| `STOPPED` | The sandbox has been paused or killed and cannot accept tasks. |
+
+Dev0 automatically marks a sandbox `STOPPED` when a connection attempt fails during `getOrCreateProjectSandbox`, preventing stale records from blocking new task execution.

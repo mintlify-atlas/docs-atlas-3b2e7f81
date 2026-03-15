@@ -1,0 +1,63 @@
+---
+title: "Introduction"
+description: "Dev0 is an agentic engineering platform that turns your ideas into GitHub pull requests using Gemini AI."
+---
+
+Dev0 is an agentic engineering platform inspired by the Ralph loop: let a code agent run until the task is actually done, but keep it contained, auditable, and reviewable. You describe a product idea, Dev0 plans the work, executes tasks inside secure E2B sandbox environments, and opens a GitHub pull request for each one. You stay in control as the technical lead while the platform handles execution.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Clone the repo, configure your environment, and create your first project in minutes.
+  </Card>
+  <Card title="How it works" icon="arrow-right-arrow-left" href="/how-it-works">
+    Follow the full end-to-end flow from idea to merged PR.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Explore the system design: frontend, backend, AI pipeline, and realtime layer.
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration">
+    Reference every environment variable and runtime option.
+  </Card>
+</CardGroup>
+
+## What makes Dev0 different
+
+<CardGroup cols={2}>
+  <Card title="Platform-controlled autonomy" icon="shield-check">
+    Agents run inside E2B sandboxes with strict orchestration and guardrails. Nothing escapes the sandbox.
+  </Card>
+  <Card title="PR-first workflow" icon="code-pull-request">
+    Every task ends with a reviewable GitHub pull request. Review is always the final gate.
+  </Card>
+  <Card title="Real-time execution visibility" icon="chart-line">
+    Live task logs and status updates stream to your browser via Upstash Realtime as the agent works.
+  </Card>
+  <Card title="Human-in-the-loop" icon="user-check">
+    You approve, request changes, or merge directly from the mission control UI.
+  </Card>
+</CardGroup>
+
+## Who it's for
+
+- **Solo engineers** — ship features faster by delegating implementation to agents while you stay in the review seat.
+- **Startups** — reduce build time with a PR-first automation pipeline that keeps your codebase clean.
+- **Teams** — use review as the control plane for all AI execution, so every change is traceable.
+- **Hackathon teams** — turn rough ideas into working, committed code with live progress you can watch.
+
+## Prerequisites
+
+Before you run Dev0, make sure you have the following:
+
+| Requirement | Purpose |
+|---|---|
+| [Bun](https://bun.sh) | Runtime and package manager |
+| PostgreSQL | Application database |
+| [E2B API key](https://e2b.dev) | Sandbox execution environments |
+| Google Gemini API key | Planning and preview generation (Vercel AI SDK) |
+| Agent Gemini API key | Autonomous coding inside sandboxes (YOLO mode) |
+| Upstash Redis credentials | Realtime pub/sub for log streaming |
+| GitHub token | Repository creation and PR operations |
+
+<Note>
+  You need two separate Gemini API keys: one for the server-side Vercel AI SDK calls (`GOOGLE_GENERATIVE_AI_API_KEY`) and one injected into sandboxes for the Gemini CLI agent (`AGENT_GEMINI_API_KEY`). They can point to the same Google Cloud project but must be configured separately.
+</Note>

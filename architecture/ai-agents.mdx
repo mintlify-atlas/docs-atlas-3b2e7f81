@@ -1,0 +1,164 @@
+---
+title: "AI agents"
+description: "How the Preview Agent and Planner Agent turn a raw idea into structured metadata and a dependency-aware task graph using Gemini 3."
+---
+
+Dev0 has two server-side AI agents, both built with the Vercel AI SDK and backed by Google Gemini. They run during project creation — before any sandbox is provisioned — and produce structured outputs that drive the rest of the platform.
+
+## Models
+
+```typescript
+// src/lib/ai/models.ts
+export const GEMINI_3_FLASH = 'gemini-3-flash-preview'
+export const GEMINI_3_PRO   = 'gemini-3-pro-preview'
+
+export type GeminiModelId = typeof GEMINI_3_FLASH | typeof GEMINI_3_PRO
+```
+
+- **Gemini 3 Flash** is used for low-latency tasks where speed matters more than depth.
+- **Gemini 3 Pro** is used when complex reasoning, long context, or nuanced planning is required.
+
+Each task in the generated plan is also assigned a `geminiModel` value by the Planner Agent, controlling which model the Gemini CLI uses when it executes that task inside the sandbox.
+
+## Preview Agent
+
+The Preview Agent (`src/lib/ai/preview-agent.ts`) runs as soon as you submit a vibe input. It extracts structured metadata so the UI can show you a project name, tagline, and description before planning begins.
+
+### Input and output
+
+```typescript
+type PreviewAgentInput = {
+  vibeInput: string
+}
+
+type PreviewAgentResult =
+  | { success: true;  data: PreviewOutput }
+  | { success: false; error: string }
+```
+
+### Schema
+
+```typescript
+// src/lib/ai/schemas.ts
+export const previewOutputSchema = z.object({
+  name: z.string().describe(
+    'A catchy, memorable project name (2-4 words, PascalCase or with spaces)',
+  ),
+  tagline: z.string().describe(
+    'A short, punchy tagline summarizing the project (max 10 words)',
+  ),
+  description: z.string().describe(
+    'A concise 2-3 sentence description (max 300 characters) that preserves key requirements, theme/styling cues, and constraints',
+  ),
+  suggestedTechStack: z.enum(['tanstack-start', 'react-vite', 'nextjs']).describe(
+    'The recommended tech stack. Use react-vite for now; other stacks are disabled for stability',
+  ),
+})
+
+export type PreviewOutput = z.infer<typeof previewOutputSchema>
+```
+
+### How it works
+
+```typescript
+export async function generatePreview(
+  input: PreviewAgentInput,
+): Promise<PreviewAgentResult> {
+  const { output } = await generateText({
+    model: google(PREVIEW_MODEL),          // GEMINI_3_FLASH
+    output: Output.object({ schema: previewOutputSchema }),
+    system: PREVIEW_SYSTEM_PROMPT,
+    prompt: `Here's the user's project idea:\n\n"${input.vibeInput}"\n\n...`,
+    temperature: 0.7,
+  })
+
+  return { success: true, data: output }
+}
+```
+
+The Vercel AI SDK's `Output.object` enforces the Zod schema and retries until it gets a valid structured response. Temperature is set to `0.7` to allow creative variation in naming while keeping the output well-formed.
+
+## Planner Agent
+
+The Planner Agent (`src/lib/ai/planner-agent.ts`) takes the confirmed project name, description, and vibe input and produces a full project plan: a spec, a task graph, and a README.
+
+### Input and output
+
+```typescript
+type PlannerAgentInput = {
+  name: string
+  description: string
+  vibeInput: string
+  techStack: TechStack
+}
+
+type PlannerAgentResult =
+  | { success: true;  data: PlannerOutput }
+  | { success: false; error: string }
+```
+
+### Schema
+
+```typescript
+export const plannedTaskSchema = z.object({
+  id:           z.string(),          // e.g. "task-1"
+  title:        z.string(),
+  description:  z.string(),
+  phase:        z.number().min(1).max(5),
+  order:        z.number().min(1),
+  dependencies: z.array(z.string()), // task IDs, not indices
+  complexity:   z.enum(['low', 'medium', 'high']),
+  geminiModel:  z.enum(['gemini-3-flash-preview', 'gemini-3-pro-preview']),
+})
+
+export const plannerOutputSchema = z.object({
+  spec:          projectSpecSchema,
+  tasks:         z.array(plannedTaskSchema).min(5).max(20),
+  readmeContent: z.string(),
+})
+```
+
+### Phase structure
+
+The planner is instructed to organize tasks into up to five phases:
+
+| Phase | Purpose |
+|---|---|
+| 1 | Foundation — project setup and core client utilities |
+| 2 | Core features — main functionality and key user flows |
+| 3 | Secondary features — additional integrations |
+| 4 | Polish — styling, animations, error handling |
+| 5 | Launch — testing, documentation, deployment |
+
+### Dependency resolution
+
+After the model returns a plan, `normalizePlannedTasks` validates it:
+
+- Assigns stable IDs (`task-1`, `task-2`, …) to any task with a duplicate or missing ID.
+- Removes forward dependencies (a task cannot depend on a task that appears after it in the list).
+- Recalculates `order` within each phase using a counter per phase.
+
+This normalization ensures the task graph the orchestrator receives is always well-formed regardless of what the model produces.
+
+### Model selection
+
+The planner assigns each task a `geminiModel` based on complexity:
+
+- `gemini-3-flash-preview` — UI components, simple CRUD, styling.
+- `gemini-3-pro-preview` — auth setup, complex state, architectural decisions.
+
+The orchestrator reads `task.geminiModel` and passes it to `executeGeminiStreaming`, so each task runs on the appropriate model.
+
+## Execution agent
+
+The execution agent is not a separate TypeScript agent. It is the **Gemini CLI** running inside an E2B sandbox in YOLO mode:
+
+```bash
+gemini --yolo --model {task.geminiModel} --output-format stream-json -p "{prompt}"
+```
+
+YOLO mode allows the CLI to execute tool calls (file writes, shell commands) without prompting for confirmation. The orchestrator provides a detailed prompt that scopes the agent to a single task, forbids database commands and git operations, and requires writing a result JSON file on completion.
+
+<Note>
+  The execution agent has no access to the Vercel AI SDK or any application code. It operates entirely within the sandbox using only the Gemini CLI binary and the tools it exposes (file read/write, shell execution).
+</Note>

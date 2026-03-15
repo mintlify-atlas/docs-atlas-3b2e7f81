@@ -1,0 +1,174 @@
+---
+title: "Environment variables"
+description: "Complete reference for all environment variables used by Dev0, grouped by service."
+---
+
+Copy `.env.example` to `.env.local` in the project root and fill in each value before starting the development server.
+
+```bash
+cp .env.example .env.local
+```
+
+<Note>
+  `.env.local` is loaded automatically by both the app server and Drizzle Kit migrations. Never commit this file to version control.
+</Note>
+
+## Full .env.example
+
+```bash .env.example
+# ============================================
+# dev0 Environment Configuration
+# ============================================
+# Copy this file to .env.local and fill in the values
+
+# Database (PostgreSQL)
+DATABASE_URL="postgresql://user:password@localhost:5432/dev0"
+
+# E2B Sandbox Orchestration
+E2B_API_KEY=""
+E2B_TEMPLATE="dev0-universal"
+E2B_SANDBOX_TIMEOUT_MS="3600000"
+
+# Google Gemini (via Vercel AI SDK)
+GOOGLE_GENERATIVE_AI_API_KEY=""
+
+# Agent Gemini API Key (used inside sandboxes for YOLO mode)
+# This key is injected into sandbox environments for autonomous coding
+AGENT_GEMINI_API_KEY=""
+
+# GitHub Bot Account (for repo creation & PR operations)
+GITHUB_TOKEN=""
+GITHUB_BOT_USERNAME="dev0-agent"
+
+# Sandbox test overrides
+TEST_REPO_URL="https://github.com/dev0-agent/scholarspend-ml2kz1df"
+GEMINI_MODEL="gemini-3-pro-preview"
+
+# Application
+APP_URL="http://localhost:3000"
+NODE_ENV="development"
+
+# Upstash Realtime (Redis)
+UPSTASH_REDIS_REST_URL=""
+UPSTASH_REDIS_REST_TOKEN=""
+```
+
+---
+
+## Database
+
+<ParamField path="DATABASE_URL" type="string">
+  PostgreSQL connection string used by Drizzle ORM and Drizzle Kit. Required when `DATABASE_PROVIDER` is `supabase` (the default).
+
+  ```
+  postgresql://user:password@localhost:5432/dev0
+  ```
+</ParamField>
+
+<ParamField path="DATABASE_PROVIDER" type="string" default="supabase">
+  Selects the database driver. Accepted values are `supabase` (uses `postgres-js`) and `neon` (uses `@neondatabase/serverless`). Defaults to `supabase`.
+</ParamField>
+
+<ParamField path="SUPABASE_DATABASE_URL" type="string">
+  Direct PostgreSQL connection string used when `DATABASE_PROVIDER=supabase`. If this is unset and the provider is `supabase`, the application throws at startup.
+</ParamField>
+
+---
+
+## E2B sandbox
+
+<ParamField path="E2B_API_KEY" type="string" required>
+  API key for the E2B sandbox platform. Required — the application throws at startup if this is missing. Obtain yours from the [E2B dashboard](https://e2b.dev).
+</ParamField>
+
+<ParamField path="E2B_TEMPLATE" type="string" default="dev0-universal">
+  The E2B sandbox template name or ID to use when creating new sandboxes. The default template is `dev0-universal` (template ID `82cjfam0491ua8d0enim`), built from `templates/e2b/e2b.Dockerfile`.
+</ParamField>
+
+<ParamField path="E2B_SANDBOX_TIMEOUT_MS" type="string" default="3600000">
+  How long (in milliseconds) a sandbox session stays alive before E2B automatically terminates it. The default is `3600000` (one hour). Set a shorter value to reduce idle costs during development.
+
+  ```
+  E2B_SANDBOX_TIMEOUT_MS="3600000"
+  ```
+</ParamField>
+
+---
+
+## Google Gemini AI
+
+<ParamField path="GOOGLE_GENERATIVE_AI_API_KEY" type="string" required>
+  Gemini API key used by the server-side AI SDK (`@ai-sdk/google`) for the planning agent and preview agent. Required — the application throws at startup if this is missing.
+</ParamField>
+
+<ParamField path="AGENT_GEMINI_API_KEY" type="string" required>
+  A separate Gemini API key that Dev0 injects into each E2B sandbox at creation time. The Gemini CLI running inside the sandbox uses this key for autonomous coding tasks ("YOLO mode"). Required — the application throws at startup if this is missing.
+
+  Using a dedicated key for sandbox execution lets you rotate or revoke sandbox access independently of your server-side key.
+</ParamField>
+
+<ParamField path="GEMINI_MODEL" type="string" default="gemini-3-pro-preview">
+  Override the Gemini model for sandbox test runs. Accepted values are `gemini-3-flash-preview` and `gemini-3-pro-preview`. This variable is only used in test tooling, not in production task execution.
+</ParamField>
+
+---
+
+## GitHub
+
+<ParamField path="GITHUB_TOKEN" type="string" required>
+  Personal access token (or GitHub App installation token) for the bot account that creates repositories and opens pull requests on behalf of Dev0. Requires `repo` and `workflow` scopes. Required — the application throws at startup if this is missing.
+</ParamField>
+
+<ParamField path="GITHUB_BOT_USERNAME" type="string" default="dev0-agent">
+  The GitHub username of the bot account. Used to construct repository clone URLs in the format `https://github.com/{GITHUB_BOT_USERNAME}/{repoName}.git`. Defaults to `dev0-agent`.
+</ParamField>
+
+---
+
+## Upstash realtime
+
+<ParamField path="UPSTASH_REDIS_REST_URL" type="string" required>
+  REST URL for your Upstash Redis instance, used to stream real-time task events to the browser. Required — the application throws at startup if this is missing.
+
+  ```
+  https://YOUR_INSTANCE.upstash.io
+  ```
+</ParamField>
+
+<ParamField path="UPSTASH_REDIS_REST_TOKEN" type="string" required>
+  Authentication token for the Upstash Redis REST API. Required — the application throws at startup if this is missing.
+</ParamField>
+
+---
+
+## Application
+
+<ParamField path="APP_URL" type="string" default="http://localhost:3000">
+  The public base URL of the Dev0 application. Used for constructing absolute URLs in emails, webhooks, and OAuth redirects. Defaults to `http://localhost:3000`.
+</ParamField>
+
+<ParamField path="NODE_ENV" type="string" default="development">
+  Standard Node.js environment flag. Set to `production` in deployed environments to enable production optimisations and disable the global database singleton used during hot-module reloading. Accepted values are `development` and `production`.
+</ParamField>
+
+---
+
+## Variable summary
+
+| Variable | Required | Default |
+|---|---|---|
+| `DATABASE_URL` | Conditional | — |
+| `DATABASE_PROVIDER` | No | `supabase` |
+| `SUPABASE_DATABASE_URL` | Conditional | — |
+| `E2B_API_KEY` | **Yes** | — |
+| `E2B_TEMPLATE` | No | `dev0-universal` |
+| `E2B_SANDBOX_TIMEOUT_MS` | No | `3600000` |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | **Yes** | — |
+| `AGENT_GEMINI_API_KEY` | **Yes** | — |
+| `GEMINI_MODEL` | No | `gemini-3-pro-preview` |
+| `GITHUB_TOKEN` | **Yes** | — |
+| `GITHUB_BOT_USERNAME` | No | `dev0-agent` |
+| `UPSTASH_REDIS_REST_URL` | **Yes** | — |
+| `UPSTASH_REDIS_REST_TOKEN` | **Yes** | — |
+| `APP_URL` | No | `http://localhost:3000` |
+| `NODE_ENV` | No | `development` |

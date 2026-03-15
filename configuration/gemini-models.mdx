@@ -1,0 +1,128 @@
+---
+title: "Gemini models"
+description: "The two Gemini models Dev0 uses, when each is applied, and how to configure your API keys."
+---
+
+Dev0 uses two Google Gemini models, each optimised for a different role in the task pipeline. Both are accessed via the Vercel AI SDK (`@ai-sdk/google`) on the server and via the Gemini CLI inside sandboxes.
+
+---
+
+## Available models
+
+```typescript src/lib/ai/models.ts
+export const GEMINI_3_FLASH = 'gemini-3-flash-preview'
+export const GEMINI_3_PRO = 'gemini-3-pro-preview'
+
+export type GeminiModelId = typeof GEMINI_3_FLASH | typeof GEMINI_3_PRO
+```
+
+<Columns cols={2}>
+  <Card title="gemini-3-flash-preview" icon="bolt">
+    Fast model used for straightforward tasks — UI components, simple CRUD, styling, and quick previews. Powers the preview agent that generates the initial project name and description from a user's idea.
+  </Card>
+  <Card title="gemini-3-pro-preview" icon="brain">
+    Full-capability model used for complex reasoning — architecture decisions, auth setup, and project planning. Powers the planner agent and is the default for task execution.
+  </Card>
+</Columns>
+
+---
+
+## Model assignment per agent
+
+### Preview agent
+
+The preview agent (`src/lib/ai/preview-agent.ts`) uses `gemini-3-flash-preview`. It runs immediately when a user submits a project idea, generating a project name, tagline, and description before the full planning pass begins.
+
+```typescript
+const PREVIEW_MODEL = GEMINI_3_FLASH  // 'gemini-3-flash-preview'
+```
+
+### Planner agent
+
+The planner agent (`src/lib/ai/planner-agent.ts`) uses `gemini-3-pro-preview`. It receives the project details and generates a full specification plus a breakdown of 5–20 atomic tasks.
+
+```typescript
+const PLANNER_MODEL = GEMINI_3_PRO   // 'gemini-3-pro-preview'
+```
+
+### Task execution
+
+Each task carries a `geminiModel` field that determines which model the Gemini CLI uses inside the sandbox. The planner agent sets this field when it generates the task list:
+
+- **`gemini-3-flash-preview`** — straightforward tasks (UI components, simple CRUD, styling)
+- **`gemini-3-pro-preview`** — complex tasks (auth, complex state, architecture decisions)
+
+The default stored in the database schema is `gemini-3-pro-preview`:
+
+```typescript src/lib/db/schema.ts
+geminiModel: geminiModelEnum('gemini_model')
+  .default('gemini-3-pro-preview')
+  .notNull(),
+```
+
+---
+
+## API keys
+
+Dev0 uses two separate Gemini API keys for security isolation.
+
+### GOOGLE_GENERATIVE_AI_API_KEY
+
+Used by the server-side Vercel AI SDK for the preview agent and planner agent. This key never leaves your server.
+
+```bash .env.local
+GOOGLE_GENERATIVE_AI_API_KEY="your-server-key"
+```
+
+### AGENT_GEMINI_API_KEY
+
+Injected into every E2B sandbox at creation time as `GEMINI_API_KEY` and `AGENT_GEMINI_API_KEY`. The Gemini CLI inside the sandbox uses this key when executing coding tasks.
+
+```bash .env.local
+AGENT_GEMINI_API_KEY="your-sandbox-key"
+```
+
+<Note>
+  The two keys serve different trust boundaries. `GOOGLE_GENERATIVE_AI_API_KEY` is used by your application server for planning and orchestration. `AGENT_GEMINI_API_KEY` is exposed inside sandbox environments, which have internet access and run untrusted code. Keeping them separate lets you revoke or rotate sandbox access without interrupting server-side AI operations.
+</Note>
+
+### Why two keys?
+
+Sandboxes run with `allowInternetAccess: true` and execute arbitrary commands. If the sandbox key were compromised, an attacker could only use it for Gemini API calls — not for your planning logic, database, or GitHub integration. Rotating `AGENT_GEMINI_API_KEY` takes effect on the next sandbox creation without any code change.
+
+---
+
+## Getting Gemini API keys
+
+<Steps>
+  <Step title="Open Google AI Studio">
+    Go to [aistudio.google.com](https://aistudio.google.com) and sign in with your Google account.
+  </Step>
+  <Step title="Create an API key">
+    Click **Get API key** → **Create API key**. Choose a Google Cloud project or create a new one.
+  </Step>
+  <Step title="Create a second key for sandboxes">
+    Repeat the process to generate a dedicated key for `AGENT_GEMINI_API_KEY`. Keeping it separate lets you manage quota and rotation independently.
+  </Step>
+  <Step title="Add both keys to .env.local">
+    ```bash .env.local
+    GOOGLE_GENERATIVE_AI_API_KEY="your-server-key"
+    AGENT_GEMINI_API_KEY="your-sandbox-key"
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Do not commit `.env.local` to version control. Both keys grant access to your Gemini quota and should be treated as secrets.
+</Warning>
+
+---
+
+## Model selection reference
+
+| Agent / context | Model | Key used |
+|---|---|---|
+| Preview agent (name + tagline generation) | `gemini-3-flash-preview` | `GOOGLE_GENERATIVE_AI_API_KEY` |
+| Planner agent (spec + task breakdown) | `gemini-3-pro-preview` | `GOOGLE_GENERATIVE_AI_API_KEY` |
+| Task execution in sandbox (simple tasks) | `gemini-3-flash-preview` | `AGENT_GEMINI_API_KEY` |
+| Task execution in sandbox (complex tasks) | `gemini-3-pro-preview` | `AGENT_GEMINI_API_KEY` |

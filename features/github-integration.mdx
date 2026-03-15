@@ -1,0 +1,145 @@
+---
+title: "GitHub integration"
+description: "How Dev0 creates repositories, manages branches, and opens pull requests automatically on your behalf."
+---
+
+Dev0 uses a GitHub bot account to perform all repository operations. Every project gets its own GitHub repo scaffolded from a template, and every completed task produces a pull request for you to review.
+
+## Repository creation
+
+When a project is confirmed, `createProjectRepository` in `src/lib/git/index.ts` calls the GitHub API to:
+
+1. Create a new repository from a tech-stack template owned by `GITHUB_BOT_USERNAME`.
+2. Commit four initial files in a single tree operation:
+
+| File | Purpose |
+|---|---|
+| `README.md` | AI-generated project overview, features, and getting-started guide |
+| `TASKLIST.md` | Auto-generated list of all planned tasks with status checkboxes |
+| `LEARNINGS.md` | Template for the agent to record reusable insights |
+| `.dev0/RULES.md` | Tech-stack-specific coding constraints read by every task agent |
+
+<Note>
+  Repositories are created as **public** by default. The `isPrivate` flag in `createFromTemplate` is `false`.
+</Note>
+
+## Authentication
+
+All GitHub API calls are made via [Octokit](https://github.com/octokit/octokit.js) authenticated with the `GITHUB_TOKEN` environment variable:
+
+```typescript
+// src/lib/git/github.ts
+export class GitHubProvider {
+  constructor() {
+    this.octokit = new Octokit({ auth: env.GITHUB_TOKEN })
+    this.owner = env.GITHUB_BOT_USERNAME
+  }
+}
+```
+
+For Git operations inside sandboxes, the same token is injected into the remote URL using the `x-access-token` credential format:
+
+```typescript
+// src/lib/execution/orchestrator.ts
+parsed.username = 'x-access-token'
+parsed.password = env.GITHUB_TOKEN
+// Produces: https://x-access-token:<token>@github.com/<owner>/<repo>.git
+```
+
+### Required token scopes
+
+| Scope | Required for |
+|---|---|
+| `repo` | Creating repositories, pushing branches, and opening pull requests |
+| `workflow` | Triggering GitHub Actions if your project uses them |
+
+## Git operations sequence
+
+After the Gemini CLI exits with code `0`, `finalizeTaskChanges` in `src/lib/execution/orchestrator.ts` runs the following Git operations inside the sandbox:
+
+<Steps>
+  <Step title="Configure git identity">
+    ```bash
+    git config user.email "dev0-agent@users.noreply.github.com"
+    git config user.name "dev0-agent"
+    ```
+  </Step>
+  <Step title="Set authenticated remote">
+    The remote URL is updated to include the `x-access-token` credential so subsequent push operations authenticate automatically.
+  </Step>
+  <Step title="Create task branch">
+    ```bash
+    git checkout -B "dev0/task-<taskId>"
+    ```
+    Branch names always follow the pattern `dev0/task-{taskId}` where `taskId` is the UUID of the task record.
+  </Step>
+  <Step title="Fetch and rebase">
+    ```bash
+    git fetch origin --prune
+    git rebase "origin/<defaultBranch>"
+    ```
+    If the rebase fails, it is aborted and execution continues with the un-rebased branch.
+  </Step>
+  <Step title="Stage and commit">
+    ```bash
+    git add -A
+    git commit -m "<commitMessage>"
+    ```
+    The commit message comes from `agent-result.json`. If no changes are staged, the task is marked `FAILED`.
+  </Step>
+  <Step title="Push branch">
+    ```bash
+    git push -u origin "dev0/task-<taskId>"
+    ```
+  </Step>
+  <Step title="Open pull request">
+    ```bash
+    gh pr create --title "<prTitle>" --body "<prBody>"
+    ```
+    The PR title and body come from `agent-result.json`. The PR URL is extracted from `gh` output and stored on the task record.
+  </Step>
+</Steps>
+
+## Branch naming
+
+Branches follow a consistent naming convention:
+
+```
+dev0/task-<taskId>
+```
+
+For example: `dev0/task-550e8400-e29b-41d4-a716-446655440000`
+
+## Merging pull requests
+
+When you approve a task in the review UI, `mergePullRequest` in `src/lib/actions/review.ts` calls the GitHub API with `mergeMethod: 'squash'`. After a successful merge, the task status is updated to `DONE`.
+
+```typescript
+await github.mergePullRequest({
+  repoName: prContext.ref.repoName,
+  prNumber: prContext.ref.prNumber,
+  mergeMethod: 'squash',
+})
+```
+
+## GitHub bot setup
+
+To use Dev0 you need a GitHub bot account and a personal access token:
+
+<Steps>
+  <Step title="Create a GitHub bot account">
+    Create a dedicated GitHub account (e.g. `my-org-dev0-bot`) that will own all project repositories.
+  </Step>
+  <Step title="Generate a personal access token">
+    Under the bot account, create a classic personal access token with the `repo` scope. Fine-grained tokens are also supported if you scope them to the correct repositories.
+  </Step>
+  <Step title="Set environment variables">
+    ```bash
+    GITHUB_TOKEN=ghp_...
+    GITHUB_BOT_USERNAME=my-org-dev0-bot
+    ```
+  </Step>
+  <Step title="Create template repositories">
+    The bot account must own a repository named `react-vite-template` that serves as the template for new projects.
+  </Step>
+</Steps>

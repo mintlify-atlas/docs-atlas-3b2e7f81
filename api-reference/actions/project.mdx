@@ -1,0 +1,325 @@
+---
+title: "Project actions"
+description: "Server actions for creating and managing projects, tasks, and their associated metadata."
+---
+
+All actions in this module are TanStack Start server functions created with `createServerFn`. You call them directly from your components or route loaders — they are not REST endpoints.
+
+## createProject
+
+Creates a new project. This action runs the full project bootstrapping pipeline: it inserts the project record, generates an AI-driven plan, creates all tasks, and initialises a GitHub repository. The project status begins as `PLANNING` and transitions to `READY` when setup completes.
+
+<ParamField path="name" type="string" required>
+  Human-readable project name.
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  One-sentence description of the project.
+</ParamField>
+
+<ParamField path="vibeInput" type="string" required>
+  Free-form natural language description of what you want to build. The AI planner uses this to generate tasks and the project spec.
+</ParamField>
+
+<ParamField path="techStack" type="'tanstack-start' | 'react-vite' | 'nextjs'" required>
+  The frontend framework template to use. Dev0 currently always provisions a `react-vite` sandbox regardless of this value.
+</ParamField>
+
+<ParamField path="theme" type="string">
+  UI color theme. Defaults to `'slate'` if omitted.
+</ParamField>
+
+**Returns** `CreateProjectResponse`
+
+```typescript
+type CreateProjectResponse = {
+  projectId: string   // UUID of the created project
+  redirectUrl: string // e.g. "/project/<projectId>"
+}
+```
+
+<CodeGroup>
+
+```typescript usage
+import { createProject } from '@/lib/actions'
+
+const result = await createProject({
+  name: 'Task Tracker',
+  description: 'A simple kanban board for solo developers',
+  vibeInput: 'I want a drag-and-drop kanban board with local storage persistence',
+  techStack: 'react-vite',
+  theme: 'slate',
+})
+
+// result.projectId — use to navigate to the project
+console.log(result.redirectUrl) // "/project/abc-123"
+```
+
+</CodeGroup>
+
+<Note>
+  `createProject` is long-running. It calls the AI planner and creates a GitHub repository before returning. Expect several seconds of latency.
+</Note>
+
+---
+
+## getProject
+
+Fetches a single project by ID along with all of its tasks. Each task includes a computed `isBlocked` field indicating whether the task is blocked by an incomplete dependency.
+
+<ParamField path="projectId" type="string" required>
+  UUID of the project to fetch.
+</ParamField>
+
+**Returns** `ProjectWithTasks`
+
+```typescript
+type ProjectWithTasks = Project & {
+  tasks: TaskWithBlocked[]
+}
+
+type TaskWithBlocked = Task & {
+  isBlocked: boolean
+}
+```
+
+<CodeGroup>
+
+```typescript usage
+import { getProject } from '@/lib/actions'
+
+const project = await getProject({ projectId: 'abc-123' })
+console.log(project.status)         // "READY"
+console.log(project.tasks[0].isBlocked) // false
+```
+
+</CodeGroup>
+
+---
+
+## getProjects
+
+Returns all projects ordered by creation date descending. Each project includes a `_count.tasks` field with the total number of tasks.
+
+This action takes no parameters.
+
+**Returns** `ProjectWithCount[]`
+
+```typescript
+type ProjectWithCount = Project & {
+  _count: { tasks: number }
+}
+```
+
+<CodeGroup>
+
+```typescript usage
+import { getProjects } from '@/lib/actions'
+
+const projects = await getProjects()
+for (const p of projects) {
+  console.log(p.name, p._count.tasks)
+}
+```
+
+</CodeGroup>
+
+---
+
+## getProjectTasks
+
+Fetches all tasks for a project, ordered by phase then order. Each task includes a computed `isBlocked` field.
+
+<ParamField path="projectId" type="string" required>
+  UUID of the project.
+</ParamField>
+
+**Returns** `TaskWithBlocked[]`
+
+---
+
+## getProjectStats
+
+Returns a count of tasks grouped by status for a project.
+
+<ParamField path="projectId" type="string" required>
+  UUID of the project.
+</ParamField>
+
+**Returns** `ProjectStats`
+
+```typescript
+type ProjectStats = {
+  total:   number
+  pending: number
+  running: number
+  review:  number
+  done:    number
+  failed:  number
+  skipped: number
+}
+```
+
+<CodeGroup>
+
+```typescript usage
+import { getProjectStats } from '@/lib/actions'
+
+const stats = await getProjectStats({ projectId: 'abc-123' })
+console.log(`${stats.done} / ${stats.total} tasks complete`)
+```
+
+</CodeGroup>
+
+---
+
+## updateProjectStatus
+
+Updates the `status` field on a project record.
+
+<ParamField path="projectId" type="string" required>
+  UUID of the project to update.
+</ParamField>
+
+<ParamField path="status" type="'PLANNING' | 'READY' | 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'ARCHIVED'" required>
+  The new status to set.
+</ParamField>
+
+**Returns** `Project` — the updated project record.
+
+---
+
+## createTask
+
+Adds a new task to an existing project. The task is appended after the last existing task in the project, inheriting its phase and the next sequential order value.
+
+<ParamField path="projectId" type="string" required>
+  UUID of the project to add the task to.
+</ParamField>
+
+<ParamField path="title" type="string" required>
+  Short task title (minimum 1 character).
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  Detailed description of the task. Maximum `MAX_REPO_DESCRIPTION_CHARS` characters.
+</ParamField>
+
+<ParamField path="geminiModel" type="'gemini-3-flash-preview' | 'gemini-3-pro-preview'">
+  The Gemini model the agent will use when executing this task. Defaults to `'gemini-3-flash-preview'`.
+</ParamField>
+
+**Returns** `Task` — the newly created task record.
+
+---
+
+## getTask
+
+Fetches a single task by ID along with summary information about its parent project.
+
+<ParamField path="taskId" type="string" required>
+  UUID of the task.
+</ParamField>
+
+**Returns** `TaskWithProject`
+
+```typescript
+type TaskWithProject = Task & {
+  project: {
+    id: string
+    name: string
+    repoName: string | null
+    repoUrl: string | null
+  }
+}
+```
+
+---
+
+## getTaskWithLogs
+
+Fetches a task along with its project info and execution logs. Use this for the task detail view. User-initiated messages are filtered from the log events before they are returned.
+
+<ParamField path="taskId" type="string" required>
+  UUID of the task.
+</ParamField>
+
+**Returns** `TaskWithProject & { executionLogs: TaskExecutionLog | null }`
+
+```typescript
+type TaskExecutionLog = {
+  id: string
+  events: GeminiStreamEvent[]
+  summary: string | null
+  totalTokens: number | null
+  durationMs: number | null
+  toolCallsCount: number | null
+}
+```
+
+<Note>
+  Execution logs are lazy-loaded. Use `getTask` when you only need task metadata and `getTaskWithLogs` when you need to display the agent's output.
+</Note>
+
+---
+
+## updateTaskStatus
+
+Updates the `status` field on a task and optionally records the associated pull request URL and number.
+
+<ParamField path="taskId" type="string" required>
+  UUID of the task.
+</ParamField>
+
+<ParamField path="status" type="'PENDING' | 'RUNNING' | 'REVIEW' | 'DONE' | 'FAILED' | 'SKIPPED'" required>
+  The new status value.
+</ParamField>
+
+<ParamField path="prUrl" type="string">
+  GitHub pull request URL to associate with the task.
+</ParamField>
+
+<ParamField path="prNumber" type="number">
+  GitHub pull request number to associate with the task.
+</ParamField>
+
+**Returns** `Task` — the updated task record.
+
+---
+
+## updateTaskModel
+
+Changes the Gemini model assigned to a task. The new model takes effect the next time the task is executed.
+
+<ParamField path="taskId" type="string" required>
+  UUID of the task.
+</ParamField>
+
+<ParamField path="geminiModel" type="'gemini-3-flash-preview' | 'gemini-3-pro-preview'" required>
+  The Gemini model to assign.
+</ParamField>
+
+**Returns** `Task` — the updated task record.
+
+---
+
+## Derived types
+
+These types are exported from `@/lib/actions` and are used across the codebase.
+
+```typescript
+// Project with its task list, each task annotated with isBlocked
+export type ProjectWithTasks = Project & { tasks: TaskWithBlocked[] }
+
+// Project with a denormalised task count from a SQL subquery
+export type ProjectWithCount = Project & { _count: { tasks: number } }
+
+// Aggregate task counts across all statuses
+export type ProjectStats = {
+  total: number; pending: number; running: number
+  review: number; done: number; failed: number; skipped: number
+}
+
+// Task with pre-computed blocked flag
+export type TaskWithBlocked = Task & { isBlocked: boolean }
+```

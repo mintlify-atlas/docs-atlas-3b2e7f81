@@ -1,0 +1,135 @@
+---
+title: "Execution actions"
+description: "Server actions for starting and stopping agent task execution."
+---
+
+Execution actions trigger the orchestrator, which manages sandbox provisioning and Gemini CLI invocation. They are TanStack Start server functions — call them directly from your components.
+
+## startExecution
+
+Starts agent execution for a project. If `taskId` is provided the orchestrator runs that specific task. If `taskId` is omitted the orchestrator automatically picks the next runnable `PENDING` task that has all its dependencies satisfied.
+
+The execution runs asynchronously after this action returns. Subscribe to the realtime channel to receive live progress events.
+
+<ParamField path="projectId" type="string" required>
+  UUID of the project to execute a task for.
+</ParamField>
+
+<ParamField path="taskId" type="string">
+  UUID of a specific task to run. When omitted, the orchestrator selects the next eligible task automatically.
+</ParamField>
+
+**Returns** `StartExecutionResponse`
+
+```typescript
+type StartExecutionResponse =
+  | {
+      success: true
+      taskId: string    // UUID of the task that started
+      sandboxId: string // E2B sandbox ID
+    }
+  | {
+      success: false
+      message: string
+      runningTaskId?: string // ID of the task already running, if any
+    }
+```
+
+<Tabs>
+  <Tab title="Task started">
+    ```typescript
+    import { startExecution } from '@/lib/actions'
+
+    const result = await startExecution({ projectId: 'abc-123' })
+
+    if (result.success) {
+      console.log('Task started:', result.taskId)
+      console.log('Sandbox:', result.sandboxId)
+    }
+    ```
+  </Tab>
+  <Tab title="Already running">
+    ```typescript
+    import { startExecution } from '@/lib/actions'
+
+    const result = await startExecution({ projectId: 'abc-123' })
+
+    if (!result.success) {
+      console.log(result.message)
+      // "A task is already running for this project"
+      console.log('Running task:', result.runningTaskId)
+    }
+    ```
+  </Tab>
+  <Tab title="Specific task">
+    ```typescript
+    import { startExecution } from '@/lib/actions'
+
+    const result = await startExecution({
+      projectId: 'abc-123',
+      taskId: 'task-456',
+    })
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Only one task per project can run at a time. If you call `startExecution` while a task is already running the action returns `success: false` with `runningTaskId` set to the currently executing task.
+</Note>
+
+---
+
+## stopExecution
+
+Stops a running execution for a project.
+
+<ParamField path="projectId" type="string" required>
+  UUID of the project whose execution to stop.
+</ParamField>
+
+**Returns**
+
+```typescript
+{ success: false; message: string }
+```
+
+<Warning>
+  `stopExecution` is not yet implemented. It always returns `{ success: false, message: 'Stop execution not implemented yet' }`.
+</Warning>
+
+---
+
+## How the orchestrator works
+
+When `startExecution` is called it delegates to `orchestrator.startTask`, which:
+
+1. Checks the in-process `projectState` map to guard against concurrent starts.
+2. Claims the target task by atomically setting its status to `RUNNING`.
+3. Creates or retrieves an E2B sandbox for the project (`getOrCreateProjectSandbox`).
+4. Fires the `execution.task_started` realtime event.
+5. Runs `runTaskExecution` asynchronously — the action returns before this completes.
+
+After the Gemini CLI finishes, the orchestrator calls `completeTask`, which transitions the task to `REVIEW` (on success) or `FAILED` (on error) and emits the corresponding realtime event.
+
+### StartTaskResult
+
+The internal type returned by `orchestrator.startTask`:
+
+```typescript
+type StartTaskResult = {
+  taskId: string
+  sandboxId: string
+  alreadyRunning: boolean
+}
+```
+
+The `startExecution` server action maps this to `StartExecutionResponse` before returning it to the client.
+
+### Realtime events emitted during execution
+
+| Event | When |
+|---|---|
+| `execution.task_started` | Sandbox is ready and the CLI is about to run |
+| `execution.task_log` | Each line of Gemini CLI stdout/stderr |
+| `execution.task_review` | Task succeeded; PR URL attached |
+| `execution.task_failed` | Task failed or sandbox error occurred |

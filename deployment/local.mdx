@@ -1,0 +1,154 @@
+---
+title: "Local development"
+description: "Set up Dev0 on your local machine for development or a self-hosted production build."
+---
+
+## Prerequisites
+
+Before you start, make sure you have the following installed and configured:
+
+<CardGroup cols={2}>
+  <Card title="Bun runtime" icon="bolt">
+    Dev0 uses Bun as its package manager and runtime. Install it from [bun.sh](https://bun.sh).
+  </Card>
+  <Card title="PostgreSQL" icon="database">
+    A local PostgreSQL instance is required. The default connection string is `postgresql://user:password@localhost:5432/dev0`.
+  </Card>
+  <Card title="E2B API key" icon="box">
+    E2B powers the isolated sandbox environments where Gemini CLI runs. Get a key at [e2b.dev](https://e2b.dev).
+  </Card>
+  <Card title="Google Gemini API key" icon="sparkles">
+    Two keys are required: one for the backend AI SDK and one injected into sandboxes for autonomous execution.
+  </Card>
+  <Card title="Upstash Redis" icon="activity">
+    Upstash provides the realtime pub/sub layer for streaming task logs. Create a Redis database at [upstash.com](https://upstash.com).
+  </Card>
+  <Card title="GitHub token" icon="github">
+    A GitHub personal access token (or bot account token) is required for repository creation and pull request operations.
+  </Card>
+</CardGroup>
+
+## Setup
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone Dev0 from GitHub and enter the project directory.
+
+    ```bash
+    git clone https://github.com/manasseh-zw/dev0.git
+    cd dev0
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Install all dependencies using Bun.
+
+    ```bash
+    bun install
+    ```
+  </Step>
+
+  <Step title="Configure your environment">
+    Copy the example environment file to `.env.local` and fill in your values.
+
+    ```bash
+    cp .env.example .env.local
+    ```
+
+    Open `.env.local` and set each variable:
+
+    ```bash .env.local
+    # Database (PostgreSQL)
+    DATABASE_URL="postgresql://user:password@localhost:5432/dev0"
+
+    # E2B Sandbox Orchestration
+    E2B_API_KEY=""
+    E2B_TEMPLATE="dev0-universal"
+    E2B_SANDBOX_TIMEOUT_MS="3600000"
+
+    # Google Gemini (via Vercel AI SDK)
+    GOOGLE_GENERATIVE_AI_API_KEY=""
+
+    # Agent Gemini API Key (injected into sandboxes for YOLO mode)
+    AGENT_GEMINI_API_KEY=""
+
+    # GitHub Bot Account (for repo creation & PR operations)
+    GITHUB_TOKEN=""
+    GITHUB_BOT_USERNAME="dev0-agent"
+
+    # Application
+    APP_URL="http://localhost:3000"
+    NODE_ENV="development"
+
+    # Upstash Realtime (Redis)
+    UPSTASH_REDIS_REST_URL=""
+    UPSTASH_REDIS_REST_TOKEN=""
+    ```
+
+    <Warning>
+      `AGENT_GEMINI_API_KEY` is injected directly into E2B sandbox environments so the Gemini CLI can run autonomously. Keep this key separate from your backend `GOOGLE_GENERATIVE_AI_API_KEY` and rotate it independently.
+    </Warning>
+  </Step>
+
+  <Step title="Run database migrations">
+    Apply the Drizzle ORM migrations to create the PostgreSQL schema.
+
+    ```bash
+    bun run db:migrate
+    ```
+
+    <Tip>
+      If you modify the database schema during development, run `bun run db:generate` to regenerate migrations before applying them.
+    </Tip>
+  </Step>
+
+  <Step title="Start the development server">
+    Start the Vite development server. The app is available at `http://localhost:3000`.
+
+    ```bash
+    bun run dev
+    ```
+  </Step>
+</Steps>
+
+## Production local build
+
+To run a production build locally, build the app and then start the server.
+
+<CodeGroup>
+
+```bash Build
+bun run build
+```
+
+```bash Start
+bun run start
+```
+
+</CodeGroup>
+
+The compiled output is written to `.output/`. The server entry point is `.output/server/index.mjs`, which is served by Bun directly.
+
+## Running tests
+
+Dev0 uses Vitest for unit and integration tests.
+
+<CodeGroup>
+
+```bash All tests
+bun run test
+```
+
+```bash Sandbox tests only
+bun run test:sandbox
+```
+
+```bash GitHub integration tests only
+bun run test:github
+```
+
+</CodeGroup>
+
+<Note>
+  Sandbox and GitHub integration tests require valid credentials in `.env.local` and will make live API calls to E2B and GitHub.
+</Note>
